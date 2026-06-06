@@ -1,0 +1,23 @@
+# Clé API — ne jamais committer
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Fichiers audio — trop lourds pour Git
+fichiers/
+*.mp3
+*.flac
+*.wav
+*.m4a
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Éditeurs
+.vscode/
+*.swp
