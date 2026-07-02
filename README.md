@@ -1,86 +1,78 @@
 # mymusic — catalogue à la demande (frontend)
 
-Squelette statique (HTML/CSS/JS, sans framework) pour la nouvelle architecture :
-un **index de métadonnées illimité**, mais un **stockage réel uniquement pour
-les morceaux ajoutés à une playlist**.
+Squelette statique (HTML/CSS/JS, sans framework) branché sur de vrais appels
+réseau vers ton backend NAS — plus de données mock. Prêt pour GitHub Pages.
 
-Prêt pour un déploiement GitHub Pages tel quel — aucune dépendance à installer.
+## Modèle de stockage (confirmé)
 
-## Pourquoi ce découpage (index vs stockage)
+- **Recherche** = toujours live, jamais stockée (métadonnées seules, via ton
+  pipeline `yt-dlp ytsearch --flat-playlist --dump-json`).
+- **Bibliothèque** = uniquement ce qui a été réellement téléchargé sur le NAS.
+  Il n'y a plus de distinction "playlist" vs "cache" : ajouter un morceau à la
+  bibliothèque = le télécharger (`yt-dlp` + `ffmpeg`) et le garder.
+- Cliquer play sur un résultat de recherche qui n'est pas encore dans la
+  bibliothèque déclenche le téléchargement, puis lance la lecture une fois
+  prêt.
 
-- **Index mondial** = recherche live (comme ton `/search` actuel avec
-  `yt-dlp ytsearch --flat-playlist --dump-json`). Ça ne coûte rien en
-  stockage car ce ne sont que des métadonnées (titre, artiste, durée, id).
-- **Cache réel** = déclenché uniquement à l'ajout dans une playlist, via ton
-  pipeline existant `yt-dlp` + `ffmpeg` (téléchargement, extraction audio,
-  métadonnées) sur le NAS.
-
-C'est le même principe que ton projet actuel — juste avec le téléchargement
-déclenché par "ajout playlist" plutôt que par upload manuel. Je suis resté
-volontairement sur ce même périmètre (outil personnel, un seul utilisateur)
-plutôt que d'en faire un vrai service multi-utilisateurs public : dès qu'on
-héberge et sert de la musique à d'autres personnes, l'exposition légale change
-de nature par rapport à un usage strictement personnel.
-
-## État actuel du frontend
-
-Tout est en mémoire (aucun backend branché) :
-
-- `WORLD_INDEX` dans `app.js` simule l'index — à remplacer par un vrai fetch.
-- La lecture audio est **une synthèse Web Audio** (accord généré), pas un
-  vrai fichier — ça permet de tester toute l'UI (play/pause/seek/volume/next)
-  sans dépendance externe ni fichier audio à héberger sur GitHub Pages.
-- L'ajout à une playlist simule un délai de téléchargement (1.2s) puis bascule
-  le morceau en "En cache" (petit point vert vs orange dans les cartes).
-
-## Contrat d'API à brancher sur le NAS
-
-Trois endpoints suffisent pour remplacer les mocks :
+## Contrat d'API attendu côté NAS
 
 ```
-GET  /api/search?q=texte
+GET  {API_BASE}/api/search?q=texte
      -> [{ id, title, artist, duration }]
-     (wrap de ton /search existant, ytsearch --flat-playlist)
+     Live, rien n'est écrit sur disque.
 
-POST /api/playlists/:playlistId/tracks   { trackId }
-     -> déclenche le téléchargement si pas déjà en cache (ton /download),
-        puis startScan Subsonic, puis répond quand prêt
+GET  {API_BASE}/api/library
+     -> [{ id, title, artist, duration }]
+     Tout ce qui existe déjà physiquement sur le NAS.
 
-GET  /api/stream/:trackId
-     -> si en cache : flux du fichier local (Subsonic stream)
-     -> sinon : 404, ou flux transitoire non persisté si tu veux permettre
-        l'écoute avant mise en cache (à toi de voir, ça ajoute de la
-        complexité pour peu de gain vu ta bande passante NAS 512 Mo RAM)
+POST {API_BASE}/api/library      body: { id, title, artist, duration }
+     -> télécharge si absent (yt-dlp + ffmpeg), répond en 2xx quand prêt.
+     -> peut réutiliser ton /download existant + déclencher le scan Subsonic.
+
+GET  {API_BASE}/api/stream/:id
+     -> flux audio (uniquement si le morceau est dans la bibliothèque).
+     -> peut proxier vers le stream Subsonic authentifié côté serveur, pour
+        ne pas exposer le token MD5 au frontend.
 ```
 
-Points d'intégration dans `app.js` :
+Le backend doit renvoyer les en-têtes CORS appropriés
+(`Access-Control-Allow-Origin`) puisque ce frontend est servi depuis un
+domaine différent (GitHub Pages) de ton tunnel Cloudflare.
 
-- `WORLD_INDEX` → remplacer par un `fetch('/api/search?q=...')` dans le
-  listener de `#searchInput`
-- `addToPlaylist()` → remplacer le `setTimeout` de simulation par un vrai
-  `fetch('/api/playlists/.../tracks', { method: 'POST', ... })`
-- `startSynth()` / `stopSynth()` → remplacer par un vrai élément `<audio>`
-  avec `src = /api/stream/${trackId}`, branché sur les mêmes contrôles
-  play/pause/seek/volume déjà câblés
+## Configuration de l'URL du backend
+
+Un champ "Backend API" est disponible dans la barre latérale (persisté en
+`localStorage` du navigateur). Pas besoin de toucher au code pour pointer
+vers `https://navidrome.mymusic-nj.com` ou toute autre URL — pratique si tu
+testes en local avant de finaliser le tunnel.
+
+## Vues de l'interface
+
+- **Accueil** — les 8 derniers morceaux téléchargés
+- **Rechercher** — recherche live dans le catalogue mondial (debounce 350ms
+  pour ne pas spammer le backend à chaque frappe)
+- **Ma bibliothèque** — tout ce qui est réellement stocké sur le NAS
+
+## Lecteur audio
+
+Un vrai élément `<audio>` (cf. `#audioEl` dans `index.html`), plus de
+synthèse Web Audio de démo. Il pointe vers `GET /api/stream/:id` et ne
+fonctionne donc que pour les morceaux déjà dans la bibliothèque — d'où le
+flux "télécharge puis joue" pour les résultats de recherche.
 
 ## Déploiement GitHub Pages
 
 1. Pousser ce dossier tel quel sur un repo (`index.html` à la racine ou dans
-   `/docs`)
-2. Activer GitHub Pages sur la branche/dossier correspondant
-3. Comme le vrai backend (NAS) n'est pas exposé publiquement de la même façon
-   que ton tunnel Cloudflare, prévoir soit :
-   - un reverse proxy vers `navidrome.mymusic-nj.com` pour les endpoints
-     `/api/*`, ou
-   - configurer les appels fetch pour pointer directement vers ton tunnel
-     Cloudflare existant
+   `/docs`), activer GitHub Pages sur la branche correspondante.
+2. Configurer côté NAS le CORS pour autoriser l'origine `https://<user>.github.io`.
+3. Renseigner l'URL du backend dans le champ "Backend API" une fois déployé.
 
 ## Fichiers
 
 ```
 mymusic-stream/
-├── index.html   structure de la page (sidebar, grille, lecteur)
-├── style.css    thème navy/violet, indicateurs de cache, responsive
-├── app.js       état, rendu, recherche, lecteur (synthèse démo)
+├── index.html   structure de la page (sidebar, config API, grille, lecteur)
+├── style.css    thème navy/violet, indicateurs bibliothèque, responsive
+├── app.js       état, fetch réseau (search/library/stream), lecteur <audio>
 └── README.md    ce fichier
 ```

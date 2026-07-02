@@ -1,75 +1,102 @@
 /* ==========================================================================
    mymusic — front-end "catalogue à la demande"
    --------------------------------------------------------------------------
-   Ce fichier tourne 100% en local (aucune dépendance backend) pour la démo.
-   Il définit un contrat d'API clair à trois endpoints à brancher plus tard
-   sur ton NAS (voir README.md du dossier) :
+   Contrat d'API attendu côté NAS (à exposer via ton tunnel Cloudflare) :
 
-     GET  /api/search?q=...          -> index de métadonnées (pas de fichier)
-     POST /api/playlists/:id/tracks  -> ajoute un morceau -> déclenche le cache
-     GET  /api/stream/:trackId       -> flux audio du morceau (si en cache)
+     GET  {API_BASE}/api/search?q=...
+          -> [{ id, title, artist, duration }]
+          Recherche live (ex: yt-dlp ytsearch --flat-playlist --dump-json).
+          Ne stocke rien, ne fait que renvoyer des métadonnées.
 
-   Tant que ce n'est pas branché, la lecture utilise une synthèse Web Audio
-   (un accord généré) pour que l'interface reste réellement interactive.
+     GET  {API_BASE}/api/library
+          -> [{ id, title, artist, duration }]
+          Tout ce qui a déjà été téléchargé et existe physiquement sur le NAS.
+
+     POST {API_BASE}/api/library      body: { id, title, artist, duration }
+          -> déclenche le téléchargement (yt-dlp + ffmpeg) s'il n'est pas déjà
+             présent, puis répond quand le fichier est prêt à être streamé.
+             Doit renvoyer un statut 2xx en cas de succès.
+
+     GET  {API_BASE}/api/stream/:id
+          -> flux audio du fichier (uniquement s'il est dans la bibliothèque).
+
+   Le backend doit répondre avec les en-têtes CORS appropriés
+   (Access-Control-Allow-Origin) puisque ce frontend est servi depuis un
+   domaine différent (GitHub Pages).
    ========================================================================== */
 
-// ---------------------------------------------------------------------------
-// 1. "Index mondial" simulé — en prod, ceci vient de GET /api/search (yt-dlp
-//    ytsearch --flat-playlist, métadonnées seules, rien n'est stocké ici).
-// ---------------------------------------------------------------------------
-const WORLD_INDEX = [
-  { id: "t1",  title: "Blinding Lights",        artist: "The Weeknd",        duration: 200 },
-  { id: "t2",  title: "Motion Sickness",        artist: "Phoebe Bridgers",   duration: 231 },
-  { id: "t3",  title: "Redbone",                artist: "Childish Gambino",  duration: 326 },
-  { id: "t4",  title: "Saldré",                 artist: "Rosalía",           duration: 172 },
-  { id: "t5",  title: "Time",                   artist: "Pink Floyd",        duration: 413 },
-  { id: "t6",  title: "太陽",                    artist: "Kenshi Yonezu",     duration: 244 },
-  { id: "t7",  title: "Silver Springs",         artist: "Fleetwood Mac",     duration: 320 },
-  { id: "t8",  title: "Nuvole Bianche",         artist: "Ludovico Einaudi",  duration: 365 },
-  { id: "t9",  title: "Cissy Strut",            artist: "The Meters",        duration: 265 },
-  { id: "t10", title: "Le Vent Nous Portera",   artist: "Noir Désir",        duration: 268 },
-  { id: "t11", title: "Alright",                artist: "Kendrick Lamar",    duration: 219 },
-  { id: "t12", title: "Porcelain",              artist: "Moby",              duration: 240 },
-];
+const $ = (sel) => document.querySelector(sel);
 
 // ---------------------------------------------------------------------------
-// 2. État applicatif local (persistant seulement en mémoire pour la démo)
-//    -> en prod, "playlist" reflète ta vraie playlist Navidrome, et
-//       "cachedIds" reflète les fichiers réellement présents sur le NAS.
+// 1. Configuration de l'URL du backend — modifiable depuis l'UI, persistée
+//    en localStorage pour ne pas avoir à retoucher le code à chaque déploiement.
+// ---------------------------------------------------------------------------
+let API_BASE = localStorage.getItem("mymusic_api_base") || "";
+
+const apiBaseInput = $("#apiBaseInput");
+const apiStatus = $("#apiStatus");
+apiBaseInput.value = API_BASE;
+updateApiStatus();
+
+apiBaseInput.addEventListener("change", () => {
+  API_BASE = apiBaseInput.value.trim().replace(/\/$/, "");
+  localStorage.setItem("mymusic_api_base", API_BASE);
+  updateApiStatus();
+  loadLibrary();
+});
+
+function updateApiStatus() {
+  if (API_BASE) {
+    apiStatus.textContent = "configuré";
+    apiStatus.classList.add("is-ok");
+  } else {
+    apiStatus.textContent = "non configuré — renseigne l'URL ci-dessus";
+    apiStatus.classList.remove("is-ok");
+  }
+}
+
+function apiUrl(path) {
+  return `${API_BASE}${path}`;
+}
+
+// ---------------------------------------------------------------------------
+// 2. État applicatif
 // ---------------------------------------------------------------------------
 const state = {
-  playlist: ["t1", "t4"],
-  cachedIds: new Set(["t1", "t4"]), // seuls les morceaux en playlist sont "stockés"
+  library: [],           // tout ce qui est réellement stocké sur le NAS
   currentTrackId: null,
   isPlaying: false,
 };
 
 const AVG_MP3_MB = 4.2; // hypothèse ~192kbps pour l'estimation de stockage affichée
+const audioEl = $("#audioEl");
+
+const byLibId = (id) => state.library.find((t) => t.id === id);
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-const $ = (sel) => document.querySelector(sel);
-const byId = (id) => WORLD_INDEX.find((t) => t.id === id);
+function normalize(str) {
+  return (str || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
 
 function formatTime(sec) {
+  if (!isFinite(sec) || sec < 0) return "0:00";
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60).toString().padStart(2, "0");
   return `${m}:${s}`;
 }
 
 function coverGradient(seed) {
-  // Génère un dégradé déterministe à partir de l'id — pas d'images externes,
-  // pas de vraies pochettes à héberger.
   let hash = 0;
-  for (const c of seed) hash = (hash * 31 + c.charCodeAt(0)) % 360;
+  for (const c of String(seed)) hash = (hash * 31 + c.charCodeAt(0)) % 360;
   const h1 = hash;
   const h2 = (hash + 55) % 360;
   return `linear-gradient(135deg, hsl(${h1} 70% 55%), hsl(${h2} 65% 40%))`;
 }
 
 function initials(title) {
-  return title
+  return (title || "?")
     .split(" ")
     .slice(0, 2)
     .map((w) => w[0])
@@ -82,18 +109,23 @@ function toast(msg) {
   el.textContent = msg;
   el.classList.add("is-visible");
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => el.classList.remove("is-visible"), 2200);
+  toast._t = setTimeout(() => el.classList.remove("is-visible"), 2400);
+}
+
+function isCached(id) {
+  return state.library.some((t) => t.id === id);
 }
 
 // ---------------------------------------------------------------------------
-// 3. Rendu — cartes (grille) et lignes (listes playlist / cache)
+// 3. Rendu
 // ---------------------------------------------------------------------------
 function renderCard(track) {
-  const cached = state.cachedIds.has(track.id);
+  const cached = isCached(track.id);
   const card = document.createElement("div");
   card.className = "card";
+  card.dataset.trackId = track.id;
   card.innerHTML = `
-    <div class="cache-dot ${cached ? "is-cached" : ""}" title="${cached ? "Stocké localement" : "À la demande — sera mis en cache si ajouté à une playlist"}"></div>
+    <div class="cache-dot ${cached ? "is-cached" : ""}" title="${cached ? "Téléchargé, stocké sur le NAS" : "Pas encore téléchargé — le sera à la lecture"}"></div>
     <div class="card-cover" style="background:${coverGradient(track.id)}">
       ${initials(track.title)}
       <div class="card-play" data-play="${track.id}">▶</div>
@@ -101,306 +133,258 @@ function renderCard(track) {
     <div class="card-title">${track.title}</div>
     <div class="card-artist">${track.artist}</div>
   `;
-  card.addEventListener("click", (e) => {
-    if (e.target.closest("[data-play]")) {
-      playTrack(track.id);
-    } else {
-      openTrackMenu(track);
-    }
-  });
+  card.addEventListener("click", () => handleTrackActivate(track));
   return card;
 }
 
-function renderRow(track, { showAdd = false } = {}) {
-  const cached = state.cachedIds.has(track.id);
+function renderRow(track) {
   const row = document.createElement("div");
   row.className = "track-row";
+  row.dataset.trackId = track.id;
   row.innerHTML = `
     <div class="track-row-cover" style="background:${coverGradient(track.id)}">${initials(track.title)}</div>
     <div>
       <div class="track-row-title">${track.title}</div>
       <div class="track-row-artist">${track.artist}</div>
     </div>
-    <span class="track-row-status ${cached ? "cached" : "ondemand"}">${cached ? "En cache" : "À la demande"}</span>
-    ${showAdd ? `<button class="ctl-btn" data-add="${track.id}" title="Ajouter à la playlist">＋</button>` : `<span></span>`}
+    <span class="track-row-status cached">En bibliothèque</span>
+    <span></span>
     <span class="track-row-duration">${formatTime(track.duration)}</span>
   `;
-  row.addEventListener("click", (e) => {
-    if (e.target.closest("[data-add]")) {
-      addToPlaylist(track.id);
-    } else {
-      playTrack(track.id);
-    }
-  });
+  row.addEventListener("click", () => handleTrackActivate(track));
   return row;
 }
 
-function renderGrid(container, tracks) {
+function renderGrid(container, tracks, emptyMsg) {
   container.innerHTML = "";
   if (!tracks.length) {
-    container.innerHTML = `<div class="empty-state">Aucun résultat dans l'index.</div>`;
+    container.innerHTML = `<div class="empty-state">${emptyMsg}</div>`;
     return;
   }
   tracks.forEach((t) => container.appendChild(renderCard(t)));
 }
 
-function renderList(container, ids, opts) {
+function renderList(container, tracks, emptyMsg) {
   container.innerHTML = "";
-  if (!ids.length) {
-    container.innerHTML = `<div class="empty-state">Rien ici pour l'instant.</div>`;
+  if (!tracks.length) {
+    container.innerHTML = `<div class="empty-state">${emptyMsg}</div>`;
     return;
   }
-  ids.map(byId).filter(Boolean).forEach((t) => container.appendChild(renderRow(t, opts)));
+  tracks.forEach((t) => container.appendChild(renderRow(t)));
 }
 
 function renderAll() {
-  renderGrid($("#homeGrid"), WORLD_INDEX.slice(0, 8));
-  renderList($("#playlistList"), state.playlist, { showAdd: false });
-  renderList($("#cachedList"), [...state.cachedIds], { showAdd: false });
+  renderGrid(
+    $("#homeGrid"),
+    [...state.library].slice(-8).reverse(),
+    "Rien de téléchargé pour l'instant — cherche un morceau et lance la lecture."
+  );
+  renderList($("#libraryList"), state.library, "Ta bibliothèque est vide pour l'instant.");
   updateStorageMeter();
 }
 
 function updateStorageMeter() {
-  const mb = state.cachedIds.size * AVG_MP3_MB;
+  const mb = state.library.length * AVG_MP3_MB;
   $("#storageLabel").textContent = mb >= 1000 ? `${(mb / 1000).toFixed(2)} Go` : `${mb.toFixed(0)} Mo`;
-  // Barre purement indicative, plafonnée à un repère visuel (ex: 2 Go)
   const pct = Math.min(100, (mb / 2000) * 100);
-  $("#storageFill").style.width = `${Math.max(pct, 3)}%`;
+  $("#storageFill").style.width = `${Math.max(pct, mb ? 3 : 0)}%`;
 }
 
 // ---------------------------------------------------------------------------
-// 4. Navigation entre vues
+// 4. Navigation
 // ---------------------------------------------------------------------------
 document.querySelectorAll(".nav-item").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".nav-item").forEach((b) => b.classList.remove("is-active"));
-    btn.classList.add("is-active");
-    document.querySelectorAll(".view").forEach((v) => v.classList.add("is-hidden"));
-    $(`#view-${btn.dataset.view}`).classList.remove("is-hidden");
-  });
+  btn.addEventListener("click", () => activateView(btn.dataset.view, btn));
 });
 
-// ---------------------------------------------------------------------------
-// 5. Recherche — en prod: fetch('/api/search?q=...') vers ton yt-dlp ytsearch
-// ---------------------------------------------------------------------------
-$("#searchInput").addEventListener("input", (e) => {
-  const q = e.target.value.trim().toLowerCase();
+function activateView(view, btn) {
   document.querySelectorAll(".nav-item").forEach((b) => b.classList.remove("is-active"));
-  $('.nav-item[data-view="search"]').classList.add("is-active");
+  (btn || document.querySelector(`.nav-item[data-view="${view}"]`)).classList.add("is-active");
   document.querySelectorAll(".view").forEach((v) => v.classList.add("is-hidden"));
-  $("#view-search").classList.remove("is-hidden");
+  $(`#view-${view}`).classList.remove("is-hidden");
+}
 
+// ---------------------------------------------------------------------------
+// 5. Recherche live — GET /api/search?q=...
+// ---------------------------------------------------------------------------
+let searchDebounce = null;
+$("#searchInput").addEventListener("input", (e) => {
+  activateView("search");
+  const q = e.target.value.trim();
+
+  clearTimeout(searchDebounce);
   if (!q) {
-    $("#searchSub").textContent = "Tape une requête ci-dessus pour interroger l'index complet.";
-    renderGrid($("#searchGrid"), []);
+    $("#searchSub").textContent = "Tape une requête ci-dessus pour interroger le catalogue mondial en direct.";
+    renderGrid($("#searchGrid"), [], "");
     return;
   }
-  const results = WORLD_INDEX.filter(
-    (t) => t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q)
-  );
-  $("#searchSub").textContent = `${results.length} résultat(s) dans l'index — aucun fichier n'est stocké tant qu'il n'est pas ajouté à une playlist.`;
-  renderGrid($("#searchGrid"), results);
+  if (!API_BASE) {
+    $("#searchSub").textContent = "Backend non configuré — renseigne l'URL de ton API dans la barre latérale.";
+    renderGrid($("#searchGrid"), [], "En attente de configuration…");
+    return;
+  }
+
+  $("#searchSub").textContent = "Recherche en cours…";
+  searchDebounce = setTimeout(() => runSearch(q), 350); // évite de spammer le backend à chaque frappe
 });
 
-// ---------------------------------------------------------------------------
-// 6. Ajout à une playlist -> déclenche la mise en cache (simulation)
-//    En prod: POST /api/playlists/:id/tracks -> le serveur télécharge via
-//    yt-dlp si le morceau n'est pas déjà dans /volume1/music/mymusic, puis
-//    répond quand le fichier est prêt.
-// ---------------------------------------------------------------------------
-function addToPlaylist(trackId) {
-  const track = byId(trackId);
-  if (state.playlist.includes(trackId)) {
-    toast(`Déjà dans la playlist : ${track.title}`);
-    return;
+async function runSearch(q) {
+  try {
+    const res = await fetch(apiUrl(`/api/search?q=${encodeURIComponent(q)}`));
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const results = await res.json();
+    $("#searchSub").textContent = `${results.length} résultat(s) — le fichier n'est téléchargé qu'à la lecture.`;
+    renderGrid($("#searchGrid"), results, "Aucun résultat pour cette recherche.");
+  } catch (err) {
+    $("#searchSub").textContent = `Erreur de recherche : ${err.message}. Vérifie l'URL du backend et le CORS.`;
+    renderGrid($("#searchGrid"), [], "");
   }
-  state.playlist.push(trackId);
+}
 
-  if (state.cachedIds.has(trackId)) {
-    toast(`Ajouté (déjà en cache) : ${track.title}`);
+// ---------------------------------------------------------------------------
+// 6. Bibliothèque — GET /api/library au chargement
+// ---------------------------------------------------------------------------
+async function loadLibrary() {
+  if (!API_BASE) {
     renderAll();
     return;
   }
-
-  toast(`Mise en cache de "${track.title}"…`);
-  // Simulation du temps de téléchargement yt-dlp + ffmpeg
-  setTimeout(() => {
-    state.cachedIds.add(trackId);
-    toast(`"${track.title}" est maintenant en cache`);
-    renderAll();
-  }, 1200);
-}
-
-function openTrackMenu(track) {
-  addToPlaylist(track.id);
-}
-
-// ---------------------------------------------------------------------------
-// 7. Lecteur — synthèse Web Audio pour la démo (aucun fichier audio externe).
-//    En prod: remplacer playTrack() par un <audio> pointant vers
-//    GET /api/stream/:trackId (flux Subsonic si en cache, sinon le backend
-//    peut streamer directement depuis la source sans persister le fichier).
-// ---------------------------------------------------------------------------
-let audioCtx = null;
-let oscillators = [];
-let gainNode = null;
-let playStartTime = 0;
-let pausedAt = 0;
-let rafId = null;
-
-function ensureAudioCtx() {
-  if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    gainNode = audioCtx.createGain();
-    gainNode.gain.value = $("#volumeSlider").value / 100;
-    gainNode.connect(audioCtx.destination);
+  try {
+    const res = await fetch(apiUrl("/api/library"));
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    state.library = await res.json();
+  } catch (err) {
+    toast(`Impossible de charger la bibliothèque : ${err.message}`);
   }
+  renderAll();
 }
 
-function stopSynth() {
-  oscillators.forEach((o) => {
-    try { o.stop(); } catch (e) {}
-  });
-  oscillators = [];
-  cancelAnimationFrame(rafId);
-}
-
-function startSynth(durationSec) {
-  ensureAudioCtx();
-  stopSynth();
-  // Petit accord évolutif, juste pour donner un retour audio réel au clic play
-  const baseFreqs = [110, 164.81, 220, 277.18];
-  baseFreqs.forEach((f, i) => {
-    const osc = audioCtx.createOscillator();
-    const g = audioCtx.createGain();
-    osc.type = i === 0 ? "sine" : "triangle";
-    osc.frequency.value = f;
-    g.gain.value = 0.05 / (i + 1);
-    osc.connect(g);
-    g.connect(gainNode);
-    osc.start();
-    oscillators.push(osc);
-
-    // Légère dérive de pitch façon "pad" pour que ce ne soit pas un bip statique
-    osc.frequency.linearRampToValueAtTime(f * 1.015, audioCtx.currentTime + durationSec);
-  });
-}
-
-function playTrack(trackId) {
-  const track = byId(trackId);
-  if (!track) return;
-
-  if (state.currentTrackId === trackId && state.isPlaying) {
-    pausePlayback();
+// ---------------------------------------------------------------------------
+// 7. Activation d'un morceau : lecture directe si déjà téléchargé,
+//    sinon téléchargement (POST /api/library) puis lecture.
+// ---------------------------------------------------------------------------
+async function handleTrackActivate(track) {
+  if (isCached(track.id)) {
+    playTrack(track);
     return;
   }
+  if (!API_BASE) {
+    toast("Configure l'URL du backend avant de lancer une lecture.");
+    return;
+  }
+  await downloadThenPlay(track);
+}
 
-  state.currentTrackId = trackId;
-  state.isPlaying = true;
-  pausedAt = 0;
-  playStartTime = performance.now();
+async function downloadThenPlay(track) {
+  const el = document.querySelector(`[data-track-id="${track.id}"]`);
+  el?.classList.add("is-loading");
+  toast(`Téléchargement de "${track.title}"…`);
 
-  const cached = state.cachedIds.has(trackId);
+  try {
+    const res = await fetch(apiUrl("/api/library"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(track),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    if (!isCached(track.id)) state.library.push(track);
+    renderAll();
+    toast(`"${track.title}" est téléchargé — lecture…`);
+    playTrack(track);
+  } catch (err) {
+    toast(`Échec du téléchargement : ${err.message}`);
+  } finally {
+    el?.classList.remove("is-loading");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 8. Lecteur — vrai élément <audio> streamé depuis GET /api/stream/:id
+// ---------------------------------------------------------------------------
+function playTrack(track) {
+  if (state.currentTrackId === track.id) {
+    togglePlayPause();
+    return;
+  }
+  state.currentTrackId = track.id;
+  audioEl.src = apiUrl(`/api/stream/${encodeURIComponent(track.id)}`);
+  audioEl.play().catch((err) => toast(`Lecture impossible : ${err.message}`));
+
   $("#playerTitle").textContent = track.title;
   $("#playerArtist").textContent = track.artist;
   $("#playerCover").style.background = coverGradient(track.id);
-  $("#playerCachePill").textContent = cached ? "En cache" : "À la demande";
-  $("#playerCachePill").className = `cache-pill ${cached ? "cached" : "ondemand"}`;
-  $("#timeTotal").textContent = formatTime(track.duration);
-  $("#playBtn").textContent = "⏸";
-
-  if (!cached) {
-    toast(`Flux à la demande — "${track.title}" (rien n'est stocké tant qu'il n'est pas ajouté à une playlist)`);
-  }
-
-  startSynth(track.duration);
-  tickProgress();
+  $("#playerCachePill").textContent = "En bibliothèque";
+  $("#playerCachePill").className = "cache-pill cached";
 }
 
-function pausePlayback() {
-  state.isPlaying = false;
-  pausedAt += (performance.now() - playStartTime) / 1000;
-  stopSynth();
-  $("#playBtn").textContent = "▶";
-}
-
-function resumePlayback() {
+function togglePlayPause() {
   if (!state.currentTrackId) return;
+  if (audioEl.paused) audioEl.play();
+  else audioEl.pause();
+}
+
+audioEl.addEventListener("play", () => {
   state.isPlaying = true;
-  playStartTime = performance.now();
-  const track = byId(state.currentTrackId);
-  startSynth(Math.max(track.duration - pausedAt, 0.5));
   $("#playBtn").textContent = "⏸";
-  tickProgress();
-}
-
-function tickProgress() {
-  if (!state.isPlaying || !state.currentTrackId) return;
-  const track = byId(state.currentTrackId);
-  const elapsed = pausedAt + (performance.now() - playStartTime) / 1000;
-
-  if (elapsed >= track.duration) {
-    stopSynth();
-    state.isPlaying = false;
-    pausedAt = 0;
-    $("#playBtn").textContent = "▶";
-    $("#progressFill").style.width = "0%";
-    $("#timeCurrent").textContent = "0:00";
-    playNextTrack();
-    return;
-  }
-
-  $("#progressFill").style.width = `${(elapsed / track.duration) * 100}%`;
-  $("#timeCurrent").textContent = formatTime(elapsed);
-  rafId = requestAnimationFrame(tickProgress);
-}
+});
+audioEl.addEventListener("pause", () => {
+  state.isPlaying = false;
+  $("#playBtn").textContent = "▶";
+});
+audioEl.addEventListener("loadedmetadata", () => {
+  $("#timeTotal").textContent = formatTime(audioEl.duration);
+});
+audioEl.addEventListener("timeupdate", () => {
+  const pct = audioEl.duration ? (audioEl.currentTime / audioEl.duration) * 100 : 0;
+  $("#progressFill").style.width = `${pct}%`;
+  $("#timeCurrent").textContent = formatTime(audioEl.currentTime);
+});
+audioEl.addEventListener("ended", playNextTrack);
+audioEl.addEventListener("error", () => {
+  if (state.currentTrackId) toast("Erreur de streaming — vérifie /api/stream côté backend.");
+});
 
 function playNextTrack() {
-  const pool = state.playlist.length ? state.playlist : WORLD_INDEX.map((t) => t.id);
-  const idx = pool.indexOf(state.currentTrackId);
+  const pool = state.library;
+  if (!pool.length) return;
+  const idx = pool.findIndex((t) => t.id === state.currentTrackId);
   const next = pool[(idx + 1) % pool.length];
   if (next) playTrack(next);
 }
 
 function playPrevTrack() {
-  const pool = state.playlist.length ? state.playlist : WORLD_INDEX.map((t) => t.id);
-  const idx = pool.indexOf(state.currentTrackId);
+  const pool = state.library;
+  if (!pool.length) return;
+  const idx = pool.findIndex((t) => t.id === state.currentTrackId);
   const prev = pool[(idx - 1 + pool.length) % pool.length];
   if (prev) playTrack(prev);
 }
 
 $("#playBtn").addEventListener("click", () => {
   if (!state.currentTrackId) {
-    playTrack(state.playlist[0] || WORLD_INDEX[0].id);
-  } else if (state.isPlaying) {
-    pausePlayback();
-  } else {
-    resumePlayback();
+    if (state.library[0]) playTrack(state.library[0]);
+    else toast("Ta bibliothèque est vide — cherche et lance un morceau d'abord.");
+    return;
   }
+  togglePlayPause();
 });
 $("#nextBtn").addEventListener("click", playNextTrack);
 $("#prevBtn").addEventListener("click", playPrevTrack);
 
 $("#volumeSlider").addEventListener("input", (e) => {
-  if (gainNode) gainNode.gain.value = e.target.value / 100;
+  audioEl.volume = e.target.value / 100;
 });
+audioEl.volume = $("#volumeSlider").value / 100;
 
 $("#progressTrack").addEventListener("click", (e) => {
-  if (!state.currentTrackId) return;
-  const track = byId(state.currentTrackId);
+  if (!audioEl.duration) return;
   const rect = e.currentTarget.getBoundingClientRect();
   const ratio = (e.clientX - rect.left) / rect.width;
-  pausedAt = ratio * track.duration;
-  if (state.isPlaying) {
-    playStartTime = performance.now();
-    startSynth(Math.max(track.duration - pausedAt, 0.5));
-  } else {
-    $("#progressFill").style.width = `${ratio * 100}%`;
-    $("#timeCurrent").textContent = formatTime(pausedAt);
-  }
+  audioEl.currentTime = ratio * audioEl.duration;
 });
 
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
-renderAll();
+loadLibrary();

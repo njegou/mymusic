@@ -69,6 +69,27 @@ input{ font-family: inherit; }
 .nav-item.is-active{ background: var(--violet-soft); color: var(--violet-2); }
 .nav-icon{ width:16px; text-align:center; font-size:14px; opacity:.9; }
 
+.api-config{
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.api-config label{
+  display:block; font-size: 11px; color: var(--text-muted); margin-bottom: 6px;
+  text-transform: uppercase; letter-spacing: .03em; font-weight: 600;
+}
+.api-config input{
+  width:100%; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 7px; padding: 7px 9px; color: var(--text); font-size: 12px; outline:none;
+}
+.api-config input:focus{ border-color: var(--violet); }
+.api-status{
+  display:inline-block; margin-top: 7px; font-size: 10.5px; color: var(--ondemand);
+}
+.api-status.is-ok{ color: var(--cached); }
+
 .storage-meter{
   margin-top: auto;
   padding: 14px 12px;
@@ -197,6 +218,10 @@ input{ font-family: inherit; }
 .track-row-status.cached{ color: var(--cached); background: var(--cached-soft); }
 .track-row-status.ondemand{ color: var(--ondemand); background: var(--ondemand-soft); }
 .track-row-duration{ font-size: 12px; color: var(--text-muted); text-align:right; }
+
+.card.is-loading, .track-row.is-loading{
+  opacity: .55; pointer-events:none; cursor:wait;
+}
 
 .empty-state{
   color: var(--text-muted); font-size: 13.5px; padding: 30px 4px;

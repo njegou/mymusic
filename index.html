@@ -24,13 +24,16 @@
         <button class="nav-item" data-view="search">
           <span class="nav-icon">⌕</span> Rechercher
         </button>
-        <button class="nav-item" data-view="playlists">
-          <span class="nav-icon">▤</span> Playlists
-        </button>
-        <button class="nav-item" data-view="cached">
-          <span class="nav-icon">◍</span> En cache
+        <button class="nav-item" data-view="library">
+          <span class="nav-icon">◍</span> Ma bibliothèque
         </button>
       </nav>
+
+      <div class="api-config">
+        <label for="apiBaseInput">Backend API</label>
+        <input id="apiBaseInput" type="text" placeholder="https://navidrome.mymusic-nj.com">
+        <span class="api-status" id="apiStatus">non configuré</span>
+      </div>
 
       <div class="storage-meter">
         <div class="storage-meter-head">
@@ -38,7 +41,7 @@
           <span id="storageLabel">0 Mo</span>
         </div>
         <div class="storage-bar"><div class="storage-bar-fill" id="storageFill"></div></div>
-        <p class="storage-note">Catalogue indexé : illimité (métadonnées seules)<br>Fichiers stockés : uniquement ce qui est en playlist</p>
+        <p class="storage-note">Catalogue indexé : illimité (métadonnées seules)<br>Fichiers stockés : uniquement ce qui a été téléchargé (bibliothèque)</p>
       </div>
     </aside>
 
@@ -53,27 +56,21 @@
       </header>
 
       <section class="view" id="view-home">
-        <h1 class="view-title">Reprendre l'écoute</h1>
-        <p class="view-sub">Le catalogue mondial est consultable en entier. Seuls les morceaux ajoutés à une playlist sont réellement stockés — le reste reste à l'état d'index.</p>
+        <h1 class="view-title">Bibliothèque récente</h1>
+        <p class="view-sub">Le catalogue mondial est consultable en entier via la recherche. Seuls les morceaux téléchargés apparaissent ici.</p>
         <div class="grid" id="homeGrid"></div>
       </section>
 
       <section class="view is-hidden" id="view-search">
         <h1 class="view-title">Résultats</h1>
-        <p class="view-sub" id="searchSub">Tape une requête ci-dessus pour interroger l'index complet.</p>
+        <p class="view-sub" id="searchSub">Tape une requête ci-dessus pour interroger le catalogue mondial en direct.</p>
         <div class="grid" id="searchGrid"></div>
       </section>
 
-      <section class="view is-hidden" id="view-playlists">
-        <h1 class="view-title">Mes playlists</h1>
-        <p class="view-sub">Ajouter un morceau ici déclenche sa mise en cache locale.</p>
-        <div class="track-list" id="playlistList"></div>
-      </section>
-
-      <section class="view is-hidden" id="view-cached">
-        <h1 class="view-title">En cache</h1>
-        <p class="view-sub">Morceaux physiquement stockés sur le serveur, prêts à être lus sans latence de récupération.</p>
-        <div class="track-list" id="cachedList"></div>
+      <section class="view is-hidden" id="view-library">
+        <h1 class="view-title">Ma bibliothèque</h1>
+        <p class="view-sub">Morceaux réellement téléchargés et stockés sur le NAS — prêts à être lus sans latence.</p>
+        <div class="track-list" id="libraryList"></div>
       </section>
 
     </main>
@@ -112,6 +109,7 @@
   </footer>
 
   <div class="toast" id="toast"></div>
+  <audio id="audioEl" preload="none"></audio>
 
   <script src="app.js"></script>
 </body>
