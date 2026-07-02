@@ -20,40 +20,22 @@
      GET  {API_BASE}/api/stream/:id
           -> flux audio du fichier (uniquement s'il est dans la bibliothèque).
 
-   Le backend doit répondre avec les en-têtes CORS appropriés
-   (Access-Control-Allow-Origin) puisque ce frontend est servi depuis un
-   domaine différent (GitHub Pages).
+   Le fichier est prévu pour être servi depuis le même domaine que l'API
+   (ton tunnel Cloudflare) : les appels /api/... sont donc relatifs et il
+   n'y a rien à configurer côté utilisateur. Voir le README pour le détail
+   du déploiement (servir ces 3 fichiers directement depuis le NAS, à côté
+   de tes endpoints /api/*, plutôt que sur GitHub Pages).
    ========================================================================== */
 
 const $ = (sel) => document.querySelector(sel);
 
 // ---------------------------------------------------------------------------
-// 1. Configuration de l'URL du backend — modifiable depuis l'UI, persistée
-//    en localStorage pour ne pas avoir à retoucher le code à chaque déploiement.
+// 1. Zéro configuration : ce fichier est servi depuis le même domaine que
+//    l'API (ton tunnel Cloudflare), donc les appels /api/... sont relatifs.
+//    Si jamais tu déploies le frontend ailleurs (domaine différent), pose
+//    juste API_BASE sur l'URL complète de ton backend ici.
 // ---------------------------------------------------------------------------
-let API_BASE = localStorage.getItem("mymusic_api_base") || "";
-
-const apiBaseInput = $("#apiBaseInput");
-const apiStatus = $("#apiStatus");
-apiBaseInput.value = API_BASE;
-updateApiStatus();
-
-apiBaseInput.addEventListener("change", () => {
-  API_BASE = apiBaseInput.value.trim().replace(/\/$/, "");
-  localStorage.setItem("mymusic_api_base", API_BASE);
-  updateApiStatus();
-  loadLibrary();
-});
-
-function updateApiStatus() {
-  if (API_BASE) {
-    apiStatus.textContent = "configuré";
-    apiStatus.classList.add("is-ok");
-  } else {
-    apiStatus.textContent = "non configuré — renseigne l'URL ci-dessus";
-    apiStatus.classList.remove("is-ok");
-  }
-}
+const API_BASE = "";
 
 function apiUrl(path) {
   return `${API_BASE}${path}`;
@@ -218,11 +200,6 @@ $("#searchInput").addEventListener("input", (e) => {
     renderGrid($("#searchGrid"), [], "");
     return;
   }
-  if (!API_BASE) {
-    $("#searchSub").textContent = "Backend non configuré — renseigne l'URL de ton API dans la barre latérale.";
-    renderGrid($("#searchGrid"), [], "En attente de configuration…");
-    return;
-  }
 
   $("#searchSub").textContent = "Recherche en cours…";
   searchDebounce = setTimeout(() => runSearch(q), 350); // évite de spammer le backend à chaque frappe
@@ -245,10 +222,6 @@ async function runSearch(q) {
 // 6. Bibliothèque — GET /api/library au chargement
 // ---------------------------------------------------------------------------
 async function loadLibrary() {
-  if (!API_BASE) {
-    renderAll();
-    return;
-  }
   try {
     const res = await fetch(apiUrl("/api/library"));
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -266,10 +239,6 @@ async function loadLibrary() {
 async function handleTrackActivate(track) {
   if (isCached(track.id)) {
     playTrack(track);
-    return;
-  }
-  if (!API_BASE) {
-    toast("Configure l'URL du backend avant de lancer une lecture.");
     return;
   }
   await downloadThenPlay(track);
