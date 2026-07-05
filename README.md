@@ -1,85 +1,80 @@
 # mymusic — catalogue à la demande (frontend)
 
-Frontend statique zéro-configuration : `index.html` / `style.css` / `app.js`
-sont prévus pour être servis **depuis le même domaine que ton API** (ton
-tunnel Cloudflare `navidrome.mymusic-nj.com`), pas sur GitHub Pages. Comme ça,
-les appels `fetch('/api/...')` sont relatifs — rien à saisir, rien à régler.
+Frontend statique déployé sur GitHub Pages (`njegou.github.io/mymusic/`),
+branché sur un backend fixe (aucun champ à remplir dans l'UI — l'URL est
+posée une fois dans `app.js`).
 
-## Pourquoi pas GitHub Pages pour héberger le frontend
+## Backend
 
-GitHub Pages te donne un domaine `*.github.io` différent de ton NAS. Un
-frontend hébergé là-bas devrait connaître l'URL de ton API (d'où le champ
-qu'on avait ajouté puis retiré) et ton backend devrait gérer le CORS.
-En servant les 3 fichiers directement depuis le NAS, tout ça disparaît.
+Le code du backend est `upload_server.py` (extension de celui que tu avais
+déjà) — trois routes ajoutées à côté de `/upload` :
 
-## Comment servir le frontend depuis le NAS (zéro-config, sans Docker)
-
-Le plus simple avec les contraintes du DS218 (pas de nginx, pas de Docker) :
-étendre le petit serveur Python que tu as déjà pour `/api/*` afin qu'il serve
-aussi ces 3 fichiers statiques. Avec `http.server` stdlib :
-
-```python
-# à ajouter à côté de tes handlers /api/search, /api/library, /api/stream
-import os
-
-STATIC_DIR = "/volume1/homes/Nicolas/mymusic-stream"  # ce dossier
-
-def do_GET(self):
-    if self.path.startswith("/api/"):
-        return self.handle_api()  # ta logique existante
-
-    path = self.path.split("?")[0]
-    if path == "/":
-        path = "/index.html"
-    filepath = os.path.join(STATIC_DIR, path.lstrip("/"))
-    if os.path.isfile(filepath):
-        self.send_response(200)
-        content_type = {
-            ".html": "text/html", ".css": "text/css", ".js": "application/javascript"
-        }.get(os.path.splitext(filepath)[1], "application/octet-stream")
-        self.send_header("Content-Type", content_type)
-        self.end_headers()
-        with open(filepath, "rb") as f:
-            self.wfile.write(f.read())
-    else:
-        self.send_response(404)
-        self.end_headers()
+```
+GET  /api/search?q=texte        recherche live (yt-dlp ytsearch, rien stocké)
+GET  /api/library                morceaux déjà téléchargés sur le NAS
+POST /api/library  { id, title, artist, duration }  télécharge si absent
+GET  /api/stream/:id             flux audio, avec support du Range (seek)
 ```
 
-Puis copier ce dossier sur le NAS (`scp` ou `git clone` direct sur le DS218 si
-tu préfères garder GitHub comme source de vérité — le NAS peut très bien
-faire un `git pull` périodique) et pointer `STATIC_DIR` dessus. Le tunnel
-Cloudflare existant sert alors le site ET l'API sur la même URL.
+Tourne sur le port 5050, comme avant. Un seul process `yt-dlp` à la fois
+(recherche ou téléchargement, jamais les deux en parallèle) pour protéger
+les 512 Mo de RAM du DS218.
+
+### Config à éditer avant de lancer
+
+En haut de `upload_server.py` :
+
+```python
+MUSIC_DIR = "/volume1/music/mymusic"
+NAVIDROME_USER = "admin"
+NAVIDROME_PASSWORD = "CHANGE_ME"   # <-- ton vrai mot de passe Navidrome
+```
+
+### Lancer sur le NAS (même pattern que Navidrome/cloudflared)
+
+```sh
+nohup python3 /volume1/homes/Nicolas/upload_server.py >> /volume1/homes/Nicolas/mymusic-api.log 2>&1 & disown
+```
+
+À ajouter en tâche déclenchée au démarrage dans DSM Task Scheduler, comme
+pour Navidrome et cloudflared, avec `>>` pour garder l'historique des logs.
+
+## Exposer le port 5050 publiquement (tunnel Cloudflare)
+
+Ton tunnel actuel route `navidrome.mymusic-nj.com` vers le port 4533. Il
+faut ajouter un deuxième hostname public pour le port 5050, dans
+`/volume1/homes/Nicolas/.cloudflared/config.yml` :
+
+```yaml
+ingress:
+  - hostname: navidrome.mymusic-nj.com
+    service: http://localhost:4533
+  - hostname: api.mymusic-nj.com
+    service: http://localhost:5050
+  - service: http_status:404
+```
+
+Puis dans Cloudflare Dashboard → DNS, ajouter un enregistrement CNAME
+`api.mymusic-nj.com` pointant vers ton tunnel (`<tunnel-id>.cfargotunnel.com`),
+comme pour `navidrome.mymusic-nj.com`. Redémarrer `cloudflared` (ou attendre
+le prochain boot si tu relances la tâche DSM).
+
+Si tu choisis un autre nom que `api.mymusic-nj.com`, mets-le à jour dans
+`app.js` :
+
+```js
+const API_BASE = "https://ton-hostname-choisi.com";
+```
 
 ## Sur "brancher YouTube / SoundCloud / Apple Music / Spotify"
 
-Une nuance importante ici : **YouTube via ton propre pipeline `yt-dlp`**
-reste dans le même cadre que ton projet actuel (perso, sur ton NAS). En
-revanche, un système qui irait chercher les morceaux complets sur Spotify ou
-Apple Music sans passer par leurs SDK officiels (et sans l'abonnement/l'auth
-de l'utilisateur) contournerait leurs protections — ce n'est pas quelque
-chose que je construis, quel que soit le cadrage.
-
-Ce qui est légitime et que je peux ajouter si tu veux enrichir le catalogue
-au-delà de YouTube :
-- **iTunes Search API** (Apple) — previews de 30s, publique, sans clé ni auth
-- **Spotify Web API** (recherche + preview_url) — publique via
-  "Client Credentials", sans compte utilisateur, previews de 30s aussi
-- **SoundCloud** — selon les morceaux, certains sont diffusables via leur
-  widget officiel
-
-Ce sont des extraits (30s), pas les morceaux complets — mais ça peut suffire
-pour identifier/prévisualiser avant de décider quoi télécharger via ton
-pipeline YouTube existant.
-
-## Contrat d'API attendu côté NAS (inchangé)
-
-```
-GET  /api/search?q=texte        -> [{ id, title, artist, duration }]
-GET  /api/library                -> [{ id, title, artist, duration }]
-POST /api/library  { id, title, artist, duration }  -> télécharge si absent
-GET  /api/stream/:id             -> flux audio (si dans la bibliothèque)
-```
+YouTube via ton propre pipeline `yt-dlp` reste dans le même cadre que ton
+projet actuel (perso, sur ton NAS). Un système qui irait chercher les
+morceaux complets sur Spotify ou Apple Music sans passer par leurs SDK
+officiels contournerait leurs protections — ce n'est pas quelque chose que
+je construis. Pistes légitimes si tu veux enrichir le catalogue au-delà de
+YouTube : iTunes Search API (previews Apple Music, publique, sans clé) et
+Spotify Web API en mode Client Credentials (recherche + previews 30s).
 
 ## Vues de l'interface
 
@@ -95,4 +90,6 @@ mymusic-stream/
 ├── style.css    thème navy/violet
 ├── app.js       état, fetch réseau, lecteur <audio>
 └── README.md    ce fichier
+
+upload_server.py  backend NAS (recherche, bibliothèque, stream, upload)
 ```

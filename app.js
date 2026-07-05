@@ -30,12 +30,14 @@
 const $ = (sel) => document.querySelector(sel);
 
 // ---------------------------------------------------------------------------
-// 1. Zéro configuration : ce fichier est servi depuis le même domaine que
-//    l'API (ton tunnel Cloudflare), donc les appels /api/... sont relatifs.
-//    Si jamais tu déploies le frontend ailleurs (domaine différent), pose
-//    juste API_BASE sur l'URL complète de ton backend ici.
+// 1. Zéro configuration côté utilisateur : l'URL du backend est fixée ici,
+//    une fois pour toutes. Ce frontend étant sur GitHub Pages (domaine
+//    différent du NAS), il faut une URL complète — pas de same-origin
+//    possible sans héberger les fichiers directement sur le NAS.
+//    -> à remplacer par le hostname public que tu ajoutes à ton tunnel
+//       Cloudflare pour exposer le port 5050 (voir README).
 // ---------------------------------------------------------------------------
-const API_BASE = "";
+const API_BASE = "https://api.mymusic-nj.com";
 
 function apiUrl(path) {
   return `${API_BASE}${path}`;
