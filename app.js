@@ -77,33 +77,29 @@ function toast(msg) {
 // ---------------------------------------------------------------------------
 function renderCard(track) {
   const cached = isCached(track.id);
-  const card = document.createElement("div");
-  card.className = "card";
-  card.dataset.trackId = track.id;
-  card.innerHTML = `
-    <div class="cache-dot ${cached ? "is-cached" : ""}" title="${cached ? "Téléchargé" : "Pas encore téléchargé — le sera à la lecture"}"></div>
-    <div class="card-cover" style="background:${coverGradient(track.id)}">
-      ${initials(track.title)}
-      <div class="card-play" data-play>▶</div>
+  const row = document.createElement("div");
+  row.className = "track-row";
+  row.dataset.trackId = track.id;
+  row.innerHTML = `
+    <div class="track-row-cover" style="background:${coverGradient(track.id)}">${initials(track.title)}</div>
+    <div>
+      <div class="track-row-title">${track.title}</div>
+      <div class="track-row-artist">${track.artist}</div>
     </div>
-    <div class="card-title-row">
-      <div class="card-title-wrap">
-        <div class="card-title">${track.title}</div>
-        <div class="card-artist">${track.artist}</div>
-      </div>
-      <button class="playlist-add-btn" data-add title="Ajouter à une playlist">＋</button>
-    </div>
+    <span class="track-row-status ${cached ? "cached" : "ondemand"}">${cached ? "Téléchargé" : "À la demande"}</span>
+    <button class="playlist-add-btn" data-add title="Ajouter à une playlist">＋</button>
+    <span class="track-row-duration" data-play title="Lire">▶</span>
   `;
-  card.querySelector("[data-play]").addEventListener("click", (e) => {
+  row.querySelector("[data-play]").addEventListener("click", (e) => {
     e.stopPropagation();
     handleTrackActivate(track);
   });
-  card.querySelector("[data-add]").addEventListener("click", (e) => {
+  row.querySelector("[data-add]").addEventListener("click", (e) => {
     e.stopPropagation();
     openPlaylistPicker(e.currentTarget, track);
   });
-  card.addEventListener("click", () => handleTrackActivate(track));
-  return card;
+  row.addEventListener("click", () => handleTrackActivate(track));
+  return row;
 }
 
 function renderGrid(container, tracks, emptyMsg) {
