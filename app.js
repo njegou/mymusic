@@ -6,6 +6,7 @@
      GET  /api/search?q=...&page=0        recherche live YouTube, 20/page
      GET  /api/library                     morceaux téléchargés via cet outil
      POST /api/library      { id, title, artist, duration }
+     GET  /api/stream-direct/<youtube_id>  lecture à la demande, rien n'est écrit sur le NAS
      GET  /api/stream/<youtube_id>         repli si pas encore sur Navidrome
      GET  /api/playlists                   liste des playlists Navidrome
      POST /api/playlists    { name }
@@ -115,7 +116,7 @@ function renderAll() {
   renderGrid(
     $("#homeGrid"),
     [...state.library].slice(-8).reverse(),
-    "Rien de téléchargé pour l'instant — cherche un morceau et lance la lecture."
+    "Rien dans ta bibliothèque pour l'instant — ajoute un morceau à une playlist pour le télécharger sur le NAS."
   );
   updateStorageMeter();
 }
@@ -361,7 +362,7 @@ async function runSearch(q, page) {
       state.search.page = page;
     }
 
-    $("#searchSub").textContent = `${state.search.results.length} résultat(s) chargé(s) — le fichier n'est téléchargé qu'à la lecture.`;
+    $("#searchSub").textContent = `${state.search.results.length} résultat(s) chargé(s) — lecture en streaming, téléchargement sur le NAS uniquement si ajouté à une playlist.`;
     renderSearchResults(results.length === PAGE_SIZE);
   } catch (err) {
     $("#searchSub").textContent = `Erreur de recherche : ${err.message}. Vérifie l'URL du backend et le CORS.`;
@@ -416,17 +417,18 @@ async function ensureDownloaded(track) {
   }
 }
 
-async function handleTrackActivate(track) {
+function handleTrackActivate(track) {
   const existing = byLibId(track.id);
   if (existing) {
+    // Déjà téléchargé (ajouté à une playlist auparavant) -> flux Navidrome.
     playTrack(existing, state.library);
     return;
   }
-  const entry = await ensureDownloaded(track);
-  if (entry) {
-    toast(`"${entry.title}" est prêt — lecture…`);
-    playTrack(entry, state.library);
-  }
+  // Lecture à la demande : streaming direct, AUCUN téléchargement sur le NAS.
+  // Le téléchargement réel n'a lieu que si l'utilisateur ajoute ce morceau
+  // à une playlist (voir openPlaylistPicker -> ensureDownloaded).
+  const queue = state.search.results.length ? state.search.results : [track];
+  playTrack(track, queue);
 }
 
 // ---------------------------------------------------------------------------
@@ -521,9 +523,20 @@ function playTrack(track, queue) {
   state.currentTrackObj = track;
   state.playQueue = queue && queue.length ? queue : [track];
 
-  const streamUrl = track.navidrome_id
-    ? apiUrl(`/api/stream-nd/${encodeURIComponent(track.navidrome_id)}`)
-    : apiUrl(`/api/stream/${encodeURIComponent(track.id)}`);
+  let streamUrl, cachePillLabel;
+  if (track.navidrome_id) {
+    // Téléchargé + synchronisé Navidrome (ajouté à une playlist).
+    streamUrl = apiUrl(`/api/stream-nd/${encodeURIComponent(track.navidrome_id)}`);
+    cachePillLabel = "Navidrome";
+  } else if (track.filename) {
+    // Téléchargé (ajout playlist en cours) mais pas encore resynchro Navidrome.
+    streamUrl = apiUrl(`/api/stream/${encodeURIComponent(track.id)}`);
+    cachePillLabel = "Local";
+  } else {
+    // Jamais téléchargé : streaming à la demande, rien n'est écrit sur le NAS.
+    streamUrl = apiUrl(`/api/stream-direct/${encodeURIComponent(track.id)}`);
+    cachePillLabel = "Streaming";
+  }
 
   audioEl.src = streamUrl;
   audioEl.play().catch((err) => toast(`Lecture impossible : ${err.message}`));
@@ -531,7 +544,7 @@ function playTrack(track, queue) {
   $("#playerTitle").textContent = track.title;
   $("#playerArtist").textContent = track.artist;
   $("#playerCover").style.background = coverGradient(key);
-  $("#playerCachePill").textContent = track.navidrome_id ? "Navidrome" : "Local";
+  $("#playerCachePill").textContent = cachePillLabel;
   $("#playerCachePill").className = "cache-pill cached";
 }
 
