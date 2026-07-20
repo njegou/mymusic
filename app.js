@@ -62,6 +62,17 @@ function coverGradient(seed) {
   for (const c of String(seed)) hash = (hash * 31 + c.charCodeAt(0)) % 360;
   return `linear-gradient(135deg, hsl(${hash} 70% 55%), hsl(${(hash + 55) % 360} 65% 40%))`;
 }
+// Cover réelle (pochette YouTube Music) en priorité, avec repli automatique
+// sur la vignette "empreinte sonore" si absente ou si le chargement échoue.
+function coverHtml(track, seed, cls = "track-row-cover", fillParent = false) {
+  const grad = coverGradient(seed);
+  const fallback = initials(track && track.title);
+  const size = fillParent ? "width:100%;height:100%;border-radius:inherit;" : "";
+  const img = track && track.cover
+    ? `<img src="${track.cover}" alt="" loading="lazy" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;" onerror="this.remove()">`
+    : "";
+  return `<div class="${cls}" style="${size}background:${grad};position:relative;overflow:hidden;">${fallback}${img}</div>`;
+}
 function initials(title) {
   return (title || "?").split(" ").slice(0, 2).map((w) => w[0]).join("").toUpperCase();
 }
@@ -82,7 +93,7 @@ function renderCard(track) {
   row.className = "track-row";
   row.dataset.trackId = track.id;
   row.innerHTML = `
-    <div class="track-row-cover" style="background:${coverGradient(track.id)}">${initials(track.title)}</div>
+    ${coverHtml(track, track.id)}
     <div>
       <div class="track-row-title">${track.title}</div>
       <div class="track-row-artist">${track.artist}</div>
@@ -172,7 +183,7 @@ function renderPlaylistTrackRow(track, queueRaw) {
   const row = document.createElement("div");
   row.className = "track-row";
   row.innerHTML = `
-    <div class="track-row-cover" style="background:${coverGradient(track.id)}">${initials(track.title)}</div>
+    ${coverHtml(track, track.id)}
     <div>
       <div class="track-row-title">${track.title}</div>
       <div class="track-row-artist">${track.artist}</div>
@@ -543,6 +554,7 @@ function playTrack(track, queue) {
 
   $("#playerTitle").textContent = track.title;
   $("#playerArtist").textContent = track.artist;
+  $("#playerCover").innerHTML = coverHtml(track, key, "", true);
   $("#playerCover").style.background = coverGradient(key);
   $("#playerCachePill").textContent = cachePillLabel;
   $("#playerCachePill").className = "cache-pill cached";
