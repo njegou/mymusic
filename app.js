@@ -24,6 +24,35 @@ function apiUrl(path) {
 }
 
 // ---------------------------------------------------------------------------
+// Accès protégé — clé demandée une fois, stockée en local sur l'appareil.
+// ---------------------------------------------------------------------------
+function getApiKey() {
+  let key = localStorage.getItem("mymusic_api_key");
+  if (!key) {
+    key = (prompt("Clé d'accès mymusic :") || "").trim();
+    if (key) localStorage.setItem("mymusic_api_key", key);
+  }
+  return key;
+}
+
+// À utiliser pour tous les appels JSON (recherche, playlists, library, upload).
+async function apiFetch(path, options = {}) {
+  const headers = { ...(options.headers || {}), "X-API-Key": getApiKey() };
+  const res = await fetch(apiUrl(path), { ...options, headers });
+  if (res.status === 401) {
+    localStorage.removeItem("mymusic_api_key");
+    toast("Clé d'accès invalide — recharge la page pour la ressaisir.");
+  }
+  return res;
+}
+
+// À utiliser pour les URLs de streaming (<audio src>) : pas de header possible
+// côté navigateur pour cet élément, donc la clé passe en paramètre ?key=.
+function streamUrlWithKey(path) {
+  return `${apiUrl(path)}?key=${encodeURIComponent(getApiKey())}`;
+}
+
+// ---------------------------------------------------------------------------
 // État
 // ---------------------------------------------------------------------------
 const state = {
@@ -169,7 +198,7 @@ function renderPlaylistsList() {
 
 async function loadPlaylists() {
   try {
-    const res = await fetch(apiUrl("/api/playlists"));
+    const res = await apiFetch("/api/playlists");
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     state.playlists = await res.json();
   } catch (err) {
@@ -204,7 +233,7 @@ async function openPlaylistDetail(id, name) {
   const container = $("#playlistDetailTracks");
   container.innerHTML = `<div class="empty-state">Chargement…</div>`;
   try {
-    const res = await fetch(apiUrl(`/api/playlists/${encodeURIComponent(id)}`));
+    const res = await apiFetch(`/api/playlists/${encodeURIComponent(id)}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     container.innerHTML = "";
@@ -227,7 +256,7 @@ $("#createPlaylistBtn").addEventListener("click", async () => {
   const name = prompt("Nom de la nouvelle playlist :");
   if (!name || !name.trim()) return;
   try {
-    const res = await fetch(apiUrl("/api/playlists"), {
+    const res = await apiFetch("/api/playlists", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: name.trim() }),
@@ -241,7 +270,7 @@ $("#createPlaylistBtn").addEventListener("click", async () => {
 });
 
 async function addTrackToPlaylist(playlistId, songId) {
-  const res = await fetch(apiUrl(`/api/playlists/${encodeURIComponent(playlistId)}/tracks`), {
+  const res = await apiFetch(`/api/playlists/${encodeURIComponent(playlistId)}/tracks`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ songId }),
@@ -362,7 +391,7 @@ $("#searchInput").addEventListener("input", (e) => {
 
 async function runSearch(q, page) {
   try {
-    const res = await fetch(apiUrl(`/api/search?q=${encodeURIComponent(q)}&page=${page}`));
+    const res = await apiFetch(`/api/search?q=${encodeURIComponent(q)}&page=${page}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const results = await res.json();
 
@@ -410,7 +439,7 @@ async function ensureDownloaded(track) {
   toast(`Téléchargement de "${track.title}"…`);
 
   try {
-    const res = await fetch(apiUrl("/api/library"), {
+    const res = await apiFetch("/api/library", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(track),
@@ -483,7 +512,7 @@ async function uploadMp3(file) {
   formData.append("file", file);
 
   try {
-    const res = await fetch(apiUrl("/upload"), { method: "POST", body: formData });
+    const res = await apiFetch("/upload", { method: "POST", body: formData });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const entry = await res.json();
     toast(`"${file.name}" importé`);
@@ -534,22 +563,22 @@ function playTrack(track, queue) {
   state.currentTrackObj = track;
   state.playQueue = queue && queue.length ? queue : [track];
 
-  let streamUrl, cachePillLabel;
+  let trackStreamUrl, cachePillLabel;
   if (track.navidrome_id) {
     // Téléchargé + synchronisé Navidrome (ajouté à une playlist).
-    streamUrl = apiUrl(`/api/stream-nd/${encodeURIComponent(track.navidrome_id)}`);
+    trackStreamUrl = streamUrlWithKey(`/api/stream-nd/${encodeURIComponent(track.navidrome_id)}`);
     cachePillLabel = "Navidrome";
   } else if (track.filename) {
     // Téléchargé (ajout playlist en cours) mais pas encore resynchro Navidrome.
-    streamUrl = apiUrl(`/api/stream/${encodeURIComponent(track.id)}`);
+    trackStreamUrl = streamUrlWithKey(`/api/stream/${encodeURIComponent(track.id)}`);
     cachePillLabel = "Local";
   } else {
     // Jamais téléchargé : streaming à la demande, rien n'est écrit sur le NAS.
-    streamUrl = apiUrl(`/api/stream-direct/${encodeURIComponent(track.id)}`);
+    trackStreamUrl = streamUrlWithKey(`/api/stream-direct/${encodeURIComponent(track.id)}`);
     cachePillLabel = "Streaming";
   }
 
-  audioEl.src = streamUrl;
+  audioEl.src = trackStreamUrl;
   audioEl.play().catch((err) => toast(`Lecture impossible : ${err.message}`));
 
   $("#playerTitle").textContent = track.title;
@@ -649,7 +678,7 @@ $("#progressTrack").addEventListener("click", (e) => {
 // ---------------------------------------------------------------------------
 async function loadLibrary() {
   try {
-    const res = await fetch(apiUrl("/api/library"));
+    const res = await apiFetch("/api/library");
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     state.library = await res.json();
   } catch (err) {
