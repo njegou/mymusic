@@ -4,7 +4,66 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>mymusic — catalogue à la demande</title>
-<link rel="stylesheet" href="style.css?v=3">
+<link rel="stylesheet" href="style.css?v=4">
+
+<!-- Page d'accès — styles autonomes (n'écrase rien de style.css) -->
+<style>
+  .access-gate {
+    position: fixed; inset: 0; z-index: 1000;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+    background: radial-gradient(120% 120% at 50% 0%, #14131f 0%, #0A0A0F 60%);
+  }
+  .access-gate.is-hidden { display: none; }
+  .access-card {
+    width: 100%; max-width: 340px; box-sizing: border-box;
+    padding: 34px 28px; text-align: center;
+    background: rgba(255,255,255,.03);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 18px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.5);
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  }
+  .access-brand {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    margin-bottom: 6px;
+  }
+  .access-mark {
+    width: 26px; height: 26px; border-radius: 8px;
+    background: linear-gradient(135deg, #6d5efc, #b06dfc);
+    box-shadow: 0 4px 16px rgba(109,94,252,.5);
+  }
+  .access-name {
+    font-size: 22px; font-weight: 700; letter-spacing: -.02em; color: #fff;
+  }
+  .access-sub {
+    margin: 0 0 22px; font-size: 13.5px; line-height: 1.5;
+    color: rgba(255,255,255,.55);
+  }
+  .access-input {
+    width: 100%; box-sizing: border-box;
+    padding: 13px 15px; margin-bottom: 12px;
+    background: rgba(0,0,0,.35);
+    border: 1px solid rgba(255,255,255,.12); border-radius: 11px;
+    color: #fff; font-size: 15px; font-family: inherit; outline: none;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .access-input:focus {
+    border-color: #6d5efc; box-shadow: 0 0 0 3px rgba(109,94,252,.22);
+  }
+  .access-btn {
+    width: 100%; padding: 13px;
+    background: linear-gradient(135deg, #6d5efc, #8f6dfc);
+    border: none; border-radius: 11px;
+    color: #fff; font-size: 15px; font-weight: 600; font-family: inherit;
+    cursor: pointer; transition: filter .15s, transform .05s;
+  }
+  .access-btn:hover { filter: brightness(1.08); }
+  .access-btn:active { transform: translateY(1px); }
+  .access-btn:disabled { opacity: .6; cursor: default; }
+  .access-error { min-height: 18px; margin-top: 12px; font-size: 13px; color: #ff6b6b; }
+  body.is-locked { overflow: hidden; }
+</style>
 
 <!-- PWA -->
 <link rel="manifest" href="manifest.json">
@@ -15,7 +74,22 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="mymusic">
 </head>
-<body>
+<body class="is-locked">
+
+  <!-- PAGE D'ACCÈS (visible par défaut : verrouillé tant que boot() n'a pas validé) -->
+  <div class="access-gate" id="accessGate">
+    <div class="access-card">
+      <div class="access-brand">
+        <span class="access-mark"></span>
+        <span class="access-name">mymusic</span>
+      </div>
+      <p class="access-sub">Espace privé. Entre le mot de passe pour accéder.</p>
+      <input type="password" id="accessPassword" class="access-input"
+             placeholder="Mot de passe" autocomplete="current-password" autofocus>
+      <button id="accessBtn" class="access-btn">Accéder</button>
+      <div class="access-error" id="accessError"></div>
+    </div>
+  </div>
 
   <div class="app">
 
@@ -188,6 +262,6 @@
   <div class="toast" id="toast"></div>
   <audio id="audioEl" preload="none"></audio>
 
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>
