@@ -26,13 +26,10 @@ function apiUrl(path) {
 // ---------------------------------------------------------------------------
 // Accès protégé — clé demandée une fois, stockée en local sur l'appareil.
 // ---------------------------------------------------------------------------
+// Mot de passe d'accès, saisi via la page d'accès et stocké sur l'appareil.
+// (plus de prompt() : le déverrouillage passe par #accessGate -> boot())
 function getApiKey() {
-  let key = localStorage.getItem("mymusic_api_key");
-  if (!key) {
-    key = (prompt("Clé d'accès mymusic :") || "").trim();
-    if (key) localStorage.setItem("mymusic_api_key", key);
-  }
-  return key;
+  return localStorage.getItem("mymusic_api_key") || "";
 }
 
 // À utiliser pour tous les appels JSON (recherche, playlists, library, upload).
@@ -41,7 +38,8 @@ async function apiFetch(path, options = {}) {
   const res = await fetch(apiUrl(path), { ...options, headers });
   if (res.status === 401) {
     localStorage.removeItem("mymusic_api_key");
-    toast("Clé d'accès invalide — recharge la page pour la ressaisir.");
+    showAccessGate();
+    toast("Accès expiré — ressaisis le mot de passe.");
   }
   return res;
 }
@@ -837,4 +835,72 @@ async function loadLibrary() {
   renderAll();
 }
 
-loadLibrary();
+// ---------------------------------------------------------------------------
+// Page d'accès — le mot de passe est validé par le BACKEND (/api/auth), pas
+// en JS. Tant qu'il n'est pas bon, l'appli reste verrouillée. Une fois validé,
+// il est mémorisé sur l'appareil (comme avant) et envoyé sur chaque requête.
+// ---------------------------------------------------------------------------
+async function validateKey(candidate) {
+  try {
+    const res = await fetch(apiUrl("/api/auth"), { headers: { "X-API-Key": candidate } });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+function showAccessGate() {
+  $("#accessGate").classList.remove("is-hidden");
+  document.body.classList.add("is-locked");
+  setTimeout(() => $("#accessPassword").focus(), 50);
+}
+
+function unlockApp() {
+  $("#accessGate").classList.add("is-hidden");
+  document.body.classList.remove("is-locked");
+  loadLibrary();
+}
+
+async function attemptAccess() {
+  const input = $("#accessPassword");
+  const btn = $("#accessBtn");
+  const err = $("#accessError");
+  const candidate = input.value.trim();
+  if (!candidate) return;
+
+  btn.disabled = true;
+  btn.textContent = "Vérification…";
+  err.textContent = "";
+
+  if (await validateKey(candidate)) {
+    localStorage.setItem("mymusic_api_key", candidate);
+    unlockApp();
+  } else {
+    err.textContent = "Mot de passe incorrect.";
+    input.value = "";
+    input.focus();
+  }
+
+  btn.disabled = false;
+  btn.textContent = "Accéder";
+}
+
+$("#accessBtn").addEventListener("click", attemptAccess);
+$("#accessPassword").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") attemptAccess();
+});
+
+// ---------------------------------------------------------------------------
+// Boot — on ne démarre l'appli que si le mot de passe stocké est encore valide.
+// ---------------------------------------------------------------------------
+async function boot() {
+  const stored = getApiKey();
+  if (stored && await validateKey(stored)) {
+    unlockApp();
+  } else {
+    localStorage.removeItem("mymusic_api_key");
+    showAccessGate();
+  }
+}
+
+boot();
