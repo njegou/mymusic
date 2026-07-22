@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>mymusic — catalogue à la demande</title>
-<link rel="stylesheet" href="style.css?v=2">
+<link rel="stylesheet" href="style.css?v=3">
 
 <!-- PWA -->
 <link rel="manifest" href="manifest.json">
@@ -32,6 +32,9 @@
         </button>
         <button class="nav-item" data-view="search">
           <span class="nav-icon">⌕</span> Rechercher
+        </button>
+        <button class="nav-item" data-view="albums">
+          <span class="nav-icon">◎</span> Albums
         </button>
         <button class="nav-item" data-view="library">
           <span class="nav-icon">◍</span> Playlists
@@ -71,6 +74,28 @@
         <h1 class="view-title">Résultats</h1>
         <p class="view-sub" id="searchSub">Tape une requête ci-dessus pour interroger le catalogue mondial en direct.</p>
         <div class="track-list" id="searchGrid"></div>
+      </section>
+
+      <section class="view is-hidden" id="view-albums">
+        <div id="albumsListWrap">
+          <div class="view-header-row">
+            <div>
+              <h1 class="view-title">Albums</h1>
+              <p class="view-sub">Ta collection Navidrome, regroupée par album. Clique une pochette pour voir tous ses morceaux.</p>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <button data-album-sort="recent" style="padding:6px 14px;border-radius:999px;border:1px solid rgba(255,255,255,.15);background:#6d5efc;color:#fff;cursor:pointer;font:inherit;">Récents</button>
+              <button data-album-sort="alphabetical" style="padding:6px 14px;border-radius:999px;border:1px solid rgba(255,255,255,.15);background:transparent;color:inherit;cursor:pointer;font:inherit;">A–Z</button>
+            </div>
+          </div>
+          <div class="track-list" id="albumsGrid"></div>
+        </div>
+
+        <div id="albumDetailWrap" class="is-hidden">
+          <button class="back-btn" id="backToAlbumsBtn">← Albums</button>
+          <div id="albumDetailHead"></div>
+          <div class="track-list" id="albumDetailTracks"></div>
+        </div>
       </section>
 
       <section class="view is-hidden" id="view-library">
@@ -149,6 +174,9 @@
     <button class="nav-item" data-view="search">
       <span class="nav-icon">⌕</span><span class="tab-label">Chercher</span>
     </button>
+    <button class="nav-item" data-view="albums">
+      <span class="nav-icon">◎</span><span class="tab-label">Albums</span>
+    </button>
     <button class="nav-item" data-view="library">
       <span class="nav-icon">◍</span><span class="tab-label">Playlists</span>
     </button>
@@ -160,6 +188,6 @@
   <div class="toast" id="toast"></div>
   <audio id="audioEl" preload="none"></audio>
 
-  <script src="app.js?v=2"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>
