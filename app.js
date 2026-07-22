@@ -52,12 +52,21 @@ function streamUrlWithKey(path) {
   return `${apiUrl(path)}?key=${encodeURIComponent(getApiKey())}`;
 }
 
+// Pochette d'album proxifiée depuis Navidrome. Un <img src> ne peut pas porter
+// de header X-API-Key, donc la clé passe en ?key= (même principe que le stream).
+function coverUrlWithKey(coverArt) {
+  if (!coverArt) return null;
+  return `${apiUrl("/api/cover/" + encodeURIComponent(coverArt))}?key=${encodeURIComponent(getApiKey())}`;
+}
+
 // ---------------------------------------------------------------------------
 // État
 // ---------------------------------------------------------------------------
 const state = {
   library: [],            // tout ce que CET outil a téléchargé (suivi local)
   playlists: [],          // playlists Navidrome (liste)
+  albums: [],             // albums Navidrome (collection, regroupée par tags)
+  albumSort: "recent",    // tri courant de la vue Albums
   playQueue: [],          // liste de lecture en cours (pour next/prev)
   playHistory: [],        // pile des morceaux joués avant l'actuel (pour "précédent")
   currentTrackId: null,   // navidrome_id si dispo, sinon youtube id
@@ -348,6 +357,142 @@ async function openPlaylistPickerDirect(anchorEl, navidromeId) {
 }
 
 // ---------------------------------------------------------------------------
+// Albums — collection Navidrome (regroupée par tags ALBUM / ALBUMARTIST)
+// Réutilise exactement le patron des playlists : liste -> détail -> tracklist,
+// et la lecture passe par playTrack(navidrome_id) -> /api/stream-nd/.
+// ---------------------------------------------------------------------------
+function renderAlbumRow(album) {
+  const cover = coverUrlWithKey(album.coverArt);
+  const albumForCover = { title: album.name, cover };
+  const row = document.createElement("div");
+  row.className = "track-row";
+  row.innerHTML = `
+    ${coverHtml(albumForCover, album.id)}
+    <div>
+      <div class="track-row-title">${album.name}</div>
+      <div class="track-row-artist">${album.artist}${album.year ? " · " + album.year : ""}</div>
+    </div>
+    <span class="track-row-status cached">${album.songCount} titre${album.songCount > 1 ? "s" : ""}</span>
+    <span></span>
+    <span></span>
+  `;
+  row.addEventListener("click", () => openAlbumDetail(album.id));
+  return row;
+}
+
+async function loadAlbums(sort = "recent") {
+  state.albumSort = sort;
+  const container = $("#albumsGrid");
+  container.innerHTML = `<div class="empty-state">Chargement des albums…</div>`;
+  try {
+    const res = await apiFetch(`/api/albums?sort=${encodeURIComponent(sort)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    state.albums = await res.json();
+  } catch (err) {
+    container.innerHTML = `<div class="empty-state">Impossible de charger les albums : ${err.message}</div>`;
+    return;
+  }
+  container.innerHTML = "";
+  if (!state.albums.length) {
+    container.innerHTML = `<div class="empty-state">Aucun album pour l'instant.</div>`;
+    return;
+  }
+  state.albums.forEach((a) => container.appendChild(renderAlbumRow(a)));
+}
+
+function renderAlbumTrackRow(track, tracks) {
+  const row = document.createElement("div");
+  row.className = "track-row";
+  const num = track.track ? String(track.track) : "";
+  row.innerHTML = `
+    <div class="track-row-cover" style="display:flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums;opacity:.85;">${num || initials(track.title)}</div>
+    <div>
+      <div class="track-row-title">${track.title}</div>
+      <div class="track-row-artist">${track.artist}</div>
+    </div>
+    <span class="track-row-status cached">Navidrome</span>
+    <span></span>
+    <span class="track-row-duration">${formatTime(track.duration)}</span>
+  `;
+  const queue = tracks.map((t) => ({ ...t, navidrome_id: t.id }));
+  row.addEventListener("click", () => playTrack({ ...track, navidrome_id: track.id }, queue));
+  return row;
+}
+
+async function openAlbumDetail(id) {
+  activateView("albums");
+  $("#albumsListWrap").classList.add("is-hidden");
+  $("#albumDetailWrap").classList.remove("is-hidden");
+  const head = $("#albumDetailHead");
+  const container = $("#albumDetailTracks");
+  head.innerHTML = "";
+  container.innerHTML = `<div class="empty-state">Chargement…</div>`;
+
+  try {
+    const res = await apiFetch(`/api/albums/${encodeURIComponent(id)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const album = await res.json();
+
+    const cover = coverUrlWithKey(album.coverArt);
+    const albumForCover = { title: album.name, cover };
+    // On propage la pochette de l'album sur chaque morceau (pour le lecteur).
+    const tracks = (album.tracks || []).map((t) => ({ ...t, cover }));
+
+    head.innerHTML = `
+      <div style="display:flex;gap:20px;align-items:flex-end;flex-wrap:wrap;margin-bottom:22px;">
+        <div style="width:168px;height:168px;border-radius:12px;overflow:hidden;flex-shrink:0;box-shadow:0 8px 30px rgba(0,0,0,.45);">
+          ${coverHtml(albumForCover, album.id, "", true)}
+        </div>
+        <div style="flex:1;min-width:220px;">
+          <div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;opacity:.6;">Album</div>
+          <h1 class="view-title" style="margin:4px 0 6px;">${album.name}</h1>
+          <div class="view-sub" style="margin:0;">${album.artist}${album.year ? " · " + album.year : ""} · ${album.songCount} titre${album.songCount > 1 ? "s" : ""}</div>
+          <div style="display:flex;gap:10px;margin-top:16px;">
+            <button class="primary-btn" id="albumPlayBtn">▶ Lecture</button>
+            <button class="primary-btn" id="albumShuffleBtn" style="background:transparent;border:1px solid rgba(255,255,255,.18);">🔀 Aléatoire</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    container.innerHTML = "";
+    if (!tracks.length) {
+      container.innerHTML = `<div class="empty-state">Cet album ne contient aucun morceau.</div>`;
+      return;
+    }
+    tracks.forEach((t) => container.appendChild(renderAlbumTrackRow(t, tracks)));
+
+    const queue = tracks.map((t) => ({ ...t, navidrome_id: t.id }));
+    $("#albumPlayBtn").addEventListener("click", () => {
+      if (queue[0]) playTrack(queue[0], queue);
+    });
+    $("#albumShuffleBtn").addEventListener("click", () => {
+      if (!queue.length) return;
+      state.shuffle = true;
+      $("#shuffleBtn").classList.add("is-active");
+      const first = queue[Math.floor(Math.random() * queue.length)];
+      playTrack(first, queue);
+    });
+  } catch (err) {
+    container.innerHTML = `<div class="empty-state">Erreur : ${err.message}</div>`;
+  }
+}
+
+$("#backToAlbumsBtn").addEventListener("click", () => {
+  $("#albumDetailWrap").classList.add("is-hidden");
+  $("#albumsListWrap").classList.remove("is-hidden");
+});
+
+document.querySelectorAll("[data-album-sort]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("[data-album-sort]").forEach((b) => {
+      b.style.background = b === btn ? "#6d5efc" : "transparent";
+    });
+    loadAlbums(btn.dataset.albumSort);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Navigation
 // ---------------------------------------------------------------------------
 document.querySelectorAll(".nav-item").forEach((btn) => {
@@ -357,6 +502,11 @@ document.querySelectorAll(".nav-item").forEach((btn) => {
       $("#playlistDetailWrap").classList.add("is-hidden");
       $("#playlistsListWrap").classList.remove("is-hidden");
       loadPlaylists();
+    }
+    if (btn.dataset.view === "albums") {
+      $("#albumDetailWrap").classList.add("is-hidden");
+      $("#albumsListWrap").classList.remove("is-hidden");
+      if (!state.albums.length) loadAlbums(state.albumSort);
     }
   });
 });
