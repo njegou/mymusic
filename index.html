@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>mymusic — catalogue à la demande</title>
-<link rel="stylesheet" href="style.css?v=4">
+<link rel="stylesheet" href="style.css?v=5">
 
 <!-- Page d'accès — styles autonomes (n'écrase rien de style.css) -->
 <style>
@@ -63,6 +63,75 @@
   .access-btn:disabled { opacity: .6; cursor: default; }
   .access-error { min-height: 18px; margin-top: 12px; font-size: 13px; color: #ff6b6b; }
   body.is-locked { overflow: hidden; }
+
+  /* --- Catalogue albums : bande de pochettes dans les résultats --- */
+  .album-strip-title {
+    font-size: 12px; letter-spacing: .09em; text-transform: uppercase;
+    color: rgba(255,255,255,.55); margin: 4px 0 12px;
+  }
+  .album-strip {
+    display: grid; gap: 16px; margin-bottom: 30px;
+    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  }
+  .album-card { cursor: pointer; }
+  .album-card-cover {
+    aspect-ratio: 1/1; border-radius: 10px; overflow: hidden;
+    background: rgba(255,255,255,.06); margin-bottom: 9px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.35);
+    transition: transform .15s, box-shadow .15s;
+  }
+  .album-card:hover .album-card-cover {
+    transform: translateY(-3px); box-shadow: 0 12px 28px rgba(0,0,0,.5);
+  }
+  .album-card-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .album-card-fallback {
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 26px; font-weight: 700; color: rgba(255,255,255,.4);
+    background: linear-gradient(135deg, #241f45, #1a1830);
+  }
+  .album-card-name {
+    font-size: 13.5px; font-weight: 600; line-height: 1.3;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .album-card-meta {
+    font-size: 12px; color: rgba(255,255,255,.5); margin-top: 2px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* --- Vue album catalogue --- */
+  .cat-album-head {
+    display: flex; gap: 24px; align-items: flex-end;
+    flex-wrap: wrap; margin: 18px 0 26px;
+  }
+  .cat-album-cover {
+    width: 190px; height: 190px; flex-shrink: 0;
+    border-radius: 13px; overflow: hidden;
+    box-shadow: 0 14px 40px rgba(0,0,0,.5);
+  }
+  .cat-album-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .cat-album-info { flex: 1; min-width: 230px; }
+  .cat-album-info .view-title { margin: 5px 0 7px; }
+  .cat-album-info .view-sub { margin: 0; }
+  .cat-album-kicker {
+    font-size: 12px; letter-spacing: .09em; text-transform: uppercase;
+    color: rgba(255,255,255,.55);
+  }
+  .cat-album-actions { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+  .primary-btn.ghost {
+    background: transparent; border: 1px solid rgba(255,255,255,.2);
+  }
+  .track-row-num {
+    display: flex; align-items: center; justify-content: center;
+    font-variant-numeric: tabular-nums; color: rgba(255,255,255,.5);
+    background: transparent;
+  }
+  .row-action {
+    background: transparent; border: none; color: rgba(255,255,255,.6);
+    font-size: 17px; cursor: pointer; padding: 4px 8px; border-radius: 7px;
+    font-family: inherit;
+  }
+  .row-action:hover { color: #fff; background: rgba(255,255,255,.09); }
 </style>
 
 <!-- PWA -->
@@ -147,7 +216,15 @@
       <section class="view is-hidden" id="view-search">
         <h1 class="view-title">Résultats</h1>
         <p class="view-sub" id="searchSub">Tape une requête ci-dessus pour interroger le catalogue mondial en direct.</p>
+        <div id="searchAlbums" class="is-hidden"></div>
         <div class="track-list" id="searchGrid"></div>
+      </section>
+
+      <!-- Album du CATALOGUE (tracklist complète, même si rien n'est téléchargé) -->
+      <section class="view is-hidden" id="view-catalog-album">
+        <button class="back-btn" id="backToSearchBtn">← Résultats</button>
+        <div id="catAlbumHead"></div>
+        <div class="track-list" id="catAlbumTracks"></div>
       </section>
 
       <section class="view is-hidden" id="view-albums">
@@ -262,6 +339,6 @@
   <div class="toast" id="toast"></div>
   <audio id="audioEl" preload="none"></audio>
 
-  <script src="app.js?v=4"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>
