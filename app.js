@@ -529,6 +529,7 @@ $("#searchInput").addEventListener("input", (e) => {
 
   if (!q) {
     $("#searchSub").textContent = "Tape une requête ci-dessus pour interroger le catalogue mondial en direct.";
+    $("#searchAlbums").classList.add("is-hidden");
     renderGrid($("#searchGrid"), [], "");
     return;
   }
@@ -538,6 +539,7 @@ $("#searchInput").addEventListener("input", (e) => {
 });
 
 async function runSearch(q, page) {
+  if (page === 0) runAlbumSearch(q);   // en parallèle, n'attend pas les morceaux
   try {
     const res = await apiFetch(`/api/search?q=${encodeURIComponent(q)}&page=${page}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -574,6 +576,143 @@ function renderSearchResults(mayHaveMore) {
     container.appendChild(btn);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Catalogue ALBUMS — n'importe quel album du monde, tracklist COMPLÈTE.
+// Différent de l'onglet "Albums" (qui, lui, liste la bibliothèque Navidrome).
+// Ici un album s'ouvre en entier même si aucun morceau n'est téléchargé :
+//   - piste déjà en bibliothèque -> lecture via Navidrome
+//   - piste absente              -> lecture directe (rien n'est écrit sur le NAS)
+// ---------------------------------------------------------------------------
+async function runAlbumSearch(q) {
+  const wrap = $("#searchAlbums");
+  wrap.innerHTML = `<div class="album-strip-title">Albums</div><div class="empty-state">Recherche d'albums…</div>`;
+  wrap.classList.remove("is-hidden");
+  try {
+    const res = await apiFetch(`/api/search-albums?q=${encodeURIComponent(q)}&limit=6`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const albums = await res.json();
+    if (!Array.isArray(albums) || !albums.length) {
+      wrap.classList.add("is-hidden");
+      return;
+    }
+    wrap.innerHTML = `<div class="album-strip-title">Albums</div>`;
+    const strip = document.createElement("div");
+    strip.className = "album-strip";
+    albums.forEach((a) => strip.appendChild(renderAlbumCard(a)));
+    wrap.appendChild(strip);
+  } catch {
+    wrap.classList.add("is-hidden");   // silencieux : les morceaux restent affichés
+  }
+}
+
+function renderAlbumCard(album) {
+  const card = document.createElement("div");
+  card.className = "album-card";
+  const cover = album.cover
+    ? `<img src="${album.cover}" alt="" loading="lazy">`
+    : `<div class="album-card-fallback">${initials(album.name)}</div>`;
+  card.innerHTML = `
+    <div class="album-card-cover">${cover}</div>
+    <div class="album-card-name">${album.name}</div>
+    <div class="album-card-meta">${album.artist}${album.year ? " · " + album.year : ""}</div>
+  `;
+  card.addEventListener("click", () => openCatalogAlbum(album.id));
+  return card;
+}
+
+function renderCatalogTrackRow(track, tracks, album) {
+  const row = document.createElement("div");
+  row.className = "track-row";
+  row.dataset.trackId = track.id;
+  const owned = track.in_library || isCached(track.id);
+  row.innerHTML = `
+    <div class="track-row-cover track-row-num">${track.track}</div>
+    <div>
+      <div class="track-row-title">${track.title}</div>
+      <div class="track-row-artist">${track.artist}</div>
+    </div>
+    <span class="track-row-status ${owned ? "cached" : ""}">${owned ? "Bibliothèque" : "Streaming"}</span>
+    <button class="row-action" title="${owned ? "Ajouter à une playlist" : "Télécharger sur le NAS"}">${owned ? "＋" : "⤓"}</button>
+    <span class="track-row-duration">${formatTime(track.duration)}</span>
+  `;
+
+  // Contexte de lecture : tout l'album, pour l'enchaînement des pistes.
+  const queue = tracks.map((t) => ({ ...t, cover: t.cover || album.cover }));
+  const self = { ...track, cover: track.cover || album.cover };
+
+  row.addEventListener("click", (e) => {
+    if (e.target.closest(".row-action")) return;
+    const entry = byLibId(track.id);
+    if (entry) playTrack(entry, state.library);      // possédé -> Navidrome
+    else playTrack(self, queue);                     // sinon -> streaming direct
+  });
+
+  row.querySelector(".row-action").addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const entry = byLibId(track.id) || await ensureDownloaded(self);
+    if (entry) openPlaylistPickerDirect(e.currentTarget, entry.navidrome_id);
+  });
+
+  return row;
+}
+
+async function openCatalogAlbum(browseId) {
+  activateView("catalog-album");
+  const head = $("#catAlbumHead");
+  const container = $("#catAlbumTracks");
+  head.innerHTML = "";
+  container.innerHTML = `<div class="empty-state">Chargement de l'album…</div>`;
+
+  try {
+    const res = await apiFetch(`/api/album/${encodeURIComponent(browseId)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const album = await res.json();
+    const tracks = album.tracks || [];
+
+    const cover = album.cover
+      ? `<img src="${album.cover}" alt="" loading="lazy">`
+      : `<div class="album-card-fallback">${initials(album.name)}</div>`;
+
+    head.innerHTML = `
+      <div class="cat-album-head">
+        <div class="cat-album-cover">${cover}</div>
+        <div class="cat-album-info">
+          <div class="cat-album-kicker">Album</div>
+          <h1 class="view-title">${album.name}</h1>
+          <div class="view-sub">${album.artist}${album.year ? " · " + album.year : ""} · ${tracks.length} titre${tracks.length > 1 ? "s" : ""}</div>
+          <div class="cat-album-actions">
+            <button class="primary-btn" id="catAlbumPlay">▶ Lecture</button>
+            <button class="primary-btn ghost" id="catAlbumShuffle">🔀 Aléatoire</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    container.innerHTML = "";
+    if (!tracks.length) {
+      container.innerHTML = `<div class="empty-state">Aucun morceau disponible pour cet album.</div>`;
+      return;
+    }
+    tracks.forEach((t) => container.appendChild(renderCatalogTrackRow(t, tracks, album)));
+
+    const queue = tracks.map((t) => ({ ...t, cover: t.cover || album.cover }));
+    $("#catAlbumPlay").addEventListener("click", () => {
+      if (queue[0]) playTrack(byLibId(queue[0].id) || queue[0], queue);
+    });
+    $("#catAlbumShuffle").addEventListener("click", () => {
+      if (!queue.length) return;
+      state.shuffle = true;
+      $("#shuffleBtn").classList.add("is-active");
+      const pick = queue[Math.floor(Math.random() * queue.length)];
+      playTrack(byLibId(pick.id) || pick, queue);
+    });
+  } catch (err) {
+    container.innerHTML = `<div class="empty-state">Erreur : ${err.message}</div>`;
+  }
+}
+
+$("#backToSearchBtn").addEventListener("click", () => activateView("search"));
 
 // ---------------------------------------------------------------------------
 // Téléchargement (recherche -> bibliothèque locale -> Navidrome)
