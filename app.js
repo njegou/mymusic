@@ -66,6 +66,7 @@ const state = {
   albums: [],             // albums Navidrome (collection, regroupée par tags)
   albumSort: "recent",    // tri courant de la vue Albums
   playQueue: [],          // liste de lecture en cours (pour next/prev)
+  queuedNext: [],         // morceaux insérés manuellement ("Lecture ensuite"), joués en priorité
   playHistory: [],        // pile des morceaux joués avant l'actuel (pour "précédent")
   currentTrackId: null,   // navidrome_id si dispo, sinon youtube id
   currentTrackObj: null,
@@ -215,7 +216,7 @@ async function loadPlaylists() {
   renderPlaylistsList();
 }
 
-function renderPlaylistTrackRow(track, queueRaw) {
+function renderPlaylistTrackRow(track, queueRaw, playlistId) {
   const row = document.createElement("div");
   row.className = "track-row";
   row.innerHTML = `
@@ -225,12 +226,82 @@ function renderPlaylistTrackRow(track, queueRaw) {
       <div class="track-row-artist">${track.artist}</div>
     </div>
     <span class="track-row-status cached">Navidrome</span>
-    <span></span>
+    <button class="row-action" title="Options">⋯</button>
     <span class="track-row-duration">${formatTime(track.duration)}</span>
   `;
   const queue = queueRaw.map((t) => ({ ...t, navidrome_id: t.id }));
-  row.addEventListener("click", () => playTrack({ ...track, navidrome_id: track.id }, queue));
+  const self = { ...track, navidrome_id: track.id };
+
+  row.addEventListener("click", (e) => {
+    if (e.target.closest(".row-action")) return;
+    playTrack(self, queue);
+  });
+
+  row.querySelector(".row-action").addEventListener("click", (e) => {
+    e.stopPropagation();
+    openTrackMenu(e.currentTarget, [
+      { label: "Lecture ensuite", icon: "▷", onClick: () => queueNext(self) },
+      { label: "Retirer de la playlist", icon: "🗑", danger: true,
+        onClick: () => removeFromPlaylist(playlistId, track.index, track.title, row) },
+    ]);
+  });
   return row;
+}
+
+// Insère un morceau juste après le titre courant (modèle "Lire ensuite").
+function queueNext(track) {
+  state.queuedNext.push({ ...track });
+  updateQueueBadge();
+  toast(`« ${track.title} » sera lu ensuite`);
+}
+
+async function removeFromPlaylist(playlistId, index, title, rowEl) {
+  if (typeof index !== "number") { toast("Index introuvable."); return; }
+  try {
+    const res = await apiFetch(`/api/playlists/${encodeURIComponent(playlistId)}/remove`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ index }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    // Recharge le détail : les index des morceaux suivants ont changé.
+    toast(`« ${title} » retiré`);
+    openPlaylistDetail(playlistId, $("#playlistDetailTitle").textContent);
+  } catch (err) {
+    toast(`Suppression impossible : ${err.message}`);
+  }
+}
+
+// Petit menu contextuel réutilisable, ancré sous un bouton.
+function openTrackMenu(anchorEl, items) {
+  document.querySelector(".track-menu")?.remove();
+  const menu = document.createElement("div");
+  menu.className = "track-menu";
+  items.forEach((it) => {
+    const b = document.createElement("button");
+    b.className = "track-menu-item" + (it.danger ? " danger" : "");
+    b.innerHTML = `<span class="track-menu-icon">${it.icon || ""}</span>${it.label}`;
+    b.addEventListener("click", (e) => { e.stopPropagation(); menu.remove(); it.onClick(); });
+    menu.appendChild(b);
+  });
+  document.body.appendChild(menu);
+  const r = anchorEl.getBoundingClientRect();
+  menu.style.top = `${r.bottom + 6}px`;
+  // Aligné à droite du bouton, sans déborder de l'écran.
+  menu.style.left = `${Math.max(8, r.right - menu.offsetWidth)}px`;
+
+  const close = (e) => {
+    if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener("click", close); }
+  };
+  setTimeout(() => document.addEventListener("click", close), 0);
+}
+
+function updateQueueBadge() {
+  const el = $("#queueBadge");
+  if (!el) return;
+  const n = state.queuedNext.length;
+  el.textContent = n;
+  el.classList.toggle("is-hidden", n === 0);
 }
 
 async function openPlaylistDetail(id, name) {
@@ -248,7 +319,7 @@ async function openPlaylistDetail(id, name) {
       container.innerHTML = `<div class="empty-state">Playlist vide — ajoute des morceaux depuis la recherche (bouton ＋).</div>`;
       return;
     }
-    data.tracks.forEach((t) => container.appendChild(renderPlaylistTrackRow(t, data.tracks)));
+    data.tracks.forEach((t) => container.appendChild(renderPlaylistTrackRow(t, data.tracks, id)));
   } catch (err) {
     container.innerHTML = `<div class="empty-state">Erreur : ${err.message}</div>`;
   }
@@ -1044,6 +1115,14 @@ audioEl.addEventListener("error", () => {
 });
 
 function playNextTrack() {
+  // Priorité aux morceaux insérés manuellement ("Lecture ensuite").
+  if (state.queuedNext.length) {
+    const next = state.queuedNext.shift();
+    updateQueueBadge();
+    playTrack(next, state.playQueue);
+    return;
+  }
+
   const pool = state.playQueue;
   if (!pool.length) return;
 
