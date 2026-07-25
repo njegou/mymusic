@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>mymusic</title>
-<link rel="stylesheet" href="style.css?v=6">
+<link rel="stylesheet" href="style.css?v=7">
 
 <!-- Page d'accès — styles autonomes (n'écrase rien de style.css) -->
 <style>
@@ -132,10 +132,31 @@
     font-family: inherit;
   }
   .row-action:hover { color: #fff; background: rgba(255,255,255,.09); }
+
+  /* --- Cartes et page ARTISTE --- */
+  .artist-card { text-align: center; }
+  .artist-cover { border-radius: 50%; }
+  .artist-card .album-card-name { margin-top: 2px; }
+  .artist-head {
+    display: flex; gap: 24px; align-items: center;
+    flex-wrap: wrap; margin: 18px 0 26px;
+  }
+  .artist-photo {
+    width: 150px; height: 150px; flex-shrink: 0;
+    border-radius: 50%; overflow: hidden;
+    box-shadow: 0 14px 40px rgba(0,0,0,.5);
+  }
+  .artist-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .artist-headinfo { flex: 1; min-width: 220px; }
+  .artist-headinfo .view-title { margin: 5px 0 7px; }
+  .artist-headinfo .view-sub { margin: 0; }
+  .artist-section-title {
+    font-size: 18px; font-weight: 600; margin: 26px 0 14px;
+  }
 </style>
 
 <!-- PWA -->
-<link rel="manifest" href="manifest.json?v=6">
+<link rel="manifest" href="manifest.json?v=7">
 <meta name="theme-color" content="#0A0A0F">
 <!-- Favicon : SVG net à toutes les tailles, PNG en repli pour les vieux Safari -->
 <link rel="icon" href="favicon.svg?v=6" type="image/svg+xml">
@@ -218,6 +239,7 @@
       <section class="view is-hidden" id="view-search">
         <h1 class="view-title">Résultats</h1>
         <p class="view-sub" id="searchSub">Tape une requête ci-dessus pour interroger le catalogue mondial en direct.</p>
+        <div id="searchArtists" class="is-hidden"></div>
         <div id="searchAlbums" class="is-hidden"></div>
         <div class="track-list" id="searchGrid"></div>
       </section>
@@ -227,6 +249,13 @@
         <button class="back-btn" id="backToSearchBtn">← Résultats</button>
         <div id="catAlbumHead"></div>
         <div class="track-list" id="catAlbumTracks"></div>
+      </section>
+
+      <!-- Page ARTISTE (populaires + albums + singles) -->
+      <section class="view is-hidden" id="view-artist">
+        <button class="back-btn" id="backToSearchBtn2">← Résultats</button>
+        <div id="artistHead"></div>
+        <div id="artistBody"></div>
       </section>
 
       <section class="view is-hidden" id="view-albums">
@@ -341,6 +370,6 @@
   <div class="toast" id="toast"></div>
   <audio id="audioEl" preload="none"></audio>
 
-  <script src="app.js?v=6"></script>
+  <script src="app.js?v=7"></script>
 </body>
 </html>
