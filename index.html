@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>mymusic</title>
-<link rel="stylesheet" href="style.css?v=7">
+<link rel="stylesheet" href="style.css?v=8">
 
 <!-- Page d'accès — styles autonomes (n'écrase rien de style.css) -->
 <style>
@@ -153,10 +153,39 @@
   .artist-section-title {
     font-size: 18px; font-weight: 600; margin: 26px 0 14px;
   }
+
+  /* --- Menu contextuel ⋯ sur les morceaux --- */
+  .track-menu {
+    position: fixed; z-index: 1200; min-width: 210px;
+    background: #26232e; border: 1px solid rgba(255,255,255,.1);
+    border-radius: 11px; padding: 6px;
+    box-shadow: 0 16px 44px rgba(0,0,0,.55);
+  }
+  .track-menu-item {
+    display: flex; align-items: center; gap: 11px; width: 100%;
+    padding: 10px 12px; border: none; background: transparent;
+    color: #e8e6ef; font: inherit; font-size: 14px; text-align: left;
+    border-radius: 8px; cursor: pointer;
+  }
+  .track-menu-item:hover { background: rgba(255,255,255,.08); }
+  .track-menu-item.danger { color: #ff8080; }
+  .track-menu-item.danger:hover { background: rgba(255,80,80,.12); }
+  .track-menu-icon { width: 18px; text-align: center; opacity: .85; }
+
+  /* --- Badge compteur de file d'attente --- */
+  #nextBtn { position: relative; }
+  .queue-badge {
+    position: absolute; top: -4px; right: -4px;
+    min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box;
+    background: #ffa8de; color: #1f1f22;
+    font-size: 10px; font-weight: 700; line-height: 16px; text-align: center;
+    border-radius: 9px;
+  }
+  .queue-badge.is-hidden { display: none; }
 </style>
 
 <!-- PWA -->
-<link rel="manifest" href="manifest.json?v=7">
+<link rel="manifest" href="manifest.json?v=8">
 <meta name="theme-color" content="#0A0A0F">
 <!-- Favicon : SVG net à toutes les tailles, PNG en repli pour les vieux Safari -->
 <link rel="icon" href="favicon.svg?v=6" type="image/svg+xml">
@@ -331,7 +360,7 @@
         <button class="ctl-btn" id="shuffleBtn" title="Lecture aléatoire">🔀</button>
         <button class="ctl-btn" id="prevBtn" title="Précédent">⏮</button>
         <button class="ctl-btn ctl-btn-main" id="playBtn" title="Lecture">▶</button>
-        <button class="ctl-btn" id="nextBtn" title="Suivant">⏭</button>
+        <button class="ctl-btn" id="nextBtn" title="Suivant">⏭<span class="queue-badge is-hidden" id="queueBadge">0</span></button>
       </div>
       <div class="progress-row">
         <span class="time" id="timeCurrent">0:00</span>
@@ -370,6 +399,6 @@
   <div class="toast" id="toast"></div>
   <audio id="audioEl" preload="none"></audio>
 
-  <script src="app.js?v=7"></script>
+  <script src="app.js?v=8"></script>
 </body>
 </html>
