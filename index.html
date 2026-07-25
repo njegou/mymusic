@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>mymusic</title>
-<link rel="stylesheet" href="style.css?v=9">
+<link rel="stylesheet" href="style.css?v=10">
 
 <!-- Page d'accès — styles autonomes (n'écrase rien de style.css) -->
 <style>
@@ -182,10 +182,23 @@
     border-radius: 9px;
   }
   .queue-badge.is-hidden { display: none; }
+
+  /* --- Favoris (cœur) --- */
+  .row-actions { display: inline-flex; align-items: center; gap: 4px; justify-content: flex-end; }
+  .fav-btn {
+    background: transparent; border: none; cursor: pointer;
+    font-size: 16px; line-height: 1; padding: 4px 6px; border-radius: 7px;
+    color: rgba(255,255,255,.45); font-family: inherit;
+    transition: color .15s, transform .1s;
+  }
+  .fav-btn:hover { color: #ffa8de; background: rgba(255,168,222,.12); }
+  .fav-btn:active { transform: scale(.86); }
+  .fav-btn.is-fav { color: #ffa8de; }
+  .fav-btn.is-loading { color: rgba(255,168,222,.7); cursor: default; }
 </style>
 
 <!-- PWA -->
-<link rel="manifest" href="manifest.json?v=9">
+<link rel="manifest" href="manifest.json?v=10">
 <meta name="theme-color" content="#0A0A0F">
 <!-- Favicon : SVG net à toutes les tailles, PNG en repli pour les vieux Safari -->
 <link rel="icon" href="favicon.svg?v=6" type="image/svg+xml">
@@ -399,6 +412,6 @@
   <div class="toast" id="toast"></div>
   <audio id="audioEl" preload="none"></audio>
 
-  <script src="app.js?v=9"></script>
+  <script src="app.js?v=10"></script>
 </body>
 </html>
