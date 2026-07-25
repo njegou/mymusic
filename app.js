@@ -530,6 +530,7 @@ $("#searchInput").addEventListener("input", (e) => {
   if (!q) {
     $("#searchSub").textContent = "Tape une requête ci-dessus pour interroger le catalogue mondial en direct.";
     $("#searchAlbums").classList.add("is-hidden");
+    $("#searchArtists").classList.add("is-hidden");
     renderGrid($("#searchGrid"), [], "");
     return;
   }
@@ -539,7 +540,7 @@ $("#searchInput").addEventListener("input", (e) => {
 });
 
 async function runSearch(q, page) {
-  if (page === 0) runAlbumSearch(q);   // en parallèle, n'attend pas les morceaux
+  if (page === 0) { runAlbumSearch(q); runArtistSearch(q); }   // en parallèle
   try {
     const res = await apiFetch(`/api/search?q=${encodeURIComponent(q)}&page=${page}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -713,6 +714,145 @@ async function openCatalogAlbum(browseId) {
 }
 
 $("#backToSearchBtn").addEventListener("click", () => activateView("search"));
+
+// ---------------------------------------------------------------------------
+// Catalogue ARTISTES — page artiste : populaires + albums + singles.
+// Les morceaux se lisent/téléchargent comme ceux d'un album ; les albums et
+// singles rebranchent sur openCatalogAlbum (la vue album déjà construite).
+// ---------------------------------------------------------------------------
+async function runArtistSearch(q) {
+  const wrap = $("#searchArtists");
+  wrap.innerHTML = `<div class="album-strip-title">Artistes</div><div class="empty-state">Recherche d'artistes…</div>`;
+  wrap.classList.remove("is-hidden");
+  try {
+    const res = await apiFetch(`/api/search-artists?q=${encodeURIComponent(q)}&limit=4`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const artists = await res.json();
+    if (!Array.isArray(artists) || !artists.length) {
+      wrap.classList.add("is-hidden");
+      return;
+    }
+    wrap.innerHTML = `<div class="album-strip-title">Artistes</div>`;
+    const strip = document.createElement("div");
+    strip.className = "album-strip";
+    artists.forEach((a) => strip.appendChild(renderArtistCard(a)));
+    wrap.appendChild(strip);
+  } catch {
+    wrap.classList.add("is-hidden");
+  }
+}
+
+function renderArtistCard(artist) {
+  const card = document.createElement("div");
+  card.className = "album-card artist-card";
+  const cover = artist.cover
+    ? `<img src="${artist.cover}" alt="" loading="lazy">`
+    : `<div class="album-card-fallback">${initials(artist.name)}</div>`;
+  card.innerHTML = `
+    <div class="album-card-cover artist-cover">${cover}</div>
+    <div class="album-card-name">${artist.name}</div>
+    ${artist.subscribers ? `<div class="album-card-meta">${artist.subscribers} abonnés</div>` : ``}
+  `;
+  card.addEventListener("click", () => openArtist(artist.id));
+  return card;
+}
+
+function renderArtistSongRow(track, tracks) {
+  const row = document.createElement("div");
+  row.className = "track-row";
+  const owned = track.in_library || isCached(track.id);
+  row.innerHTML = `
+    <div class="track-row-cover track-row-num">♪</div>
+    <div>
+      <div class="track-row-title">${track.title}</div>
+      <div class="track-row-artist">${track.artist}</div>
+    </div>
+    <span class="track-row-status ${owned ? "cached" : ""}">${owned ? "Bibliothèque" : "Streaming"}</span>
+    <button class="row-action" title="${owned ? "Ajouter à une playlist" : "Télécharger sur le NAS"}">${owned ? "＋" : "⤓"}</button>
+    <span class="track-row-duration">${formatTime(track.duration)}</span>
+  `;
+  const queue = tracks.map((t) => ({ ...t }));
+  const self = { ...track };
+  row.addEventListener("click", (e) => {
+    if (e.target.closest(".row-action")) return;
+    const entry = byLibId(track.id);
+    if (entry) playTrack(entry, state.library);
+    else playTrack(self, queue);
+  });
+  row.querySelector(".row-action").addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const entry = byLibId(track.id) || await ensureDownloaded(self);
+    if (entry) openPlaylistPickerDirect(e.currentTarget, entry.navidrome_id);
+  });
+  return row;
+}
+
+async function openArtist(browseId) {
+  activateView("artist");
+  const head = $("#artistHead");
+  const body = $("#artistBody");
+  head.innerHTML = "";
+  body.innerHTML = `<div class="empty-state">Chargement de l'artiste…</div>`;
+
+  try {
+    const res = await apiFetch(`/api/artist/${encodeURIComponent(browseId)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const artist = await res.json();
+
+    const cover = artist.cover
+      ? `<img src="${artist.cover}" alt="" loading="lazy">`
+      : `<div class="album-card-fallback">${initials(artist.name)}</div>`;
+
+    head.innerHTML = `
+      <div class="artist-head">
+        <div class="artist-photo">${cover}</div>
+        <div class="artist-headinfo">
+          <div class="cat-album-kicker">Artiste</div>
+          <h1 class="view-title">${artist.name}</h1>
+          ${artist.subscribers ? `<div class="view-sub">${artist.subscribers}</div>` : ``}
+        </div>
+      </div>
+    `;
+
+    body.innerHTML = "";
+
+    // Section populaires
+    const songs = artist.songs || [];
+    if (songs.length) {
+      const h = document.createElement("h2");
+      h.className = "artist-section-title";
+      h.textContent = "Populaires";
+      body.appendChild(h);
+      const list = document.createElement("div");
+      list.className = "track-list";
+      songs.forEach((t) => list.appendChild(renderArtistSongRow(t, songs)));
+      body.appendChild(list);
+    }
+
+    // Sections albums et singles -> réutilisent la carte album + openCatalogAlbum
+    const addReleases = (title, releases) => {
+      if (!releases || !releases.length) return;
+      const h = document.createElement("h2");
+      h.className = "artist-section-title";
+      h.textContent = title;
+      body.appendChild(h);
+      const strip = document.createElement("div");
+      strip.className = "album-strip";
+      releases.forEach((r) => strip.appendChild(renderAlbumCard(r)));
+      body.appendChild(strip);
+    };
+    addReleases("Albums", artist.albums);
+    addReleases("Singles & EP", artist.singles);
+
+    if (!songs.length && !(artist.albums || []).length && !(artist.singles || []).length) {
+      body.innerHTML = `<div class="empty-state">Aucun contenu disponible pour cet artiste.</div>`;
+    }
+  } catch (err) {
+    body.innerHTML = `<div class="empty-state">Erreur : ${err.message}</div>`;
+  }
+}
+
+$("#backToSearchBtn2").addEventListener("click", () => activateView("search"));
 
 // ---------------------------------------------------------------------------
 // Téléchargement (recherche -> bibliothèque locale -> Navidrome)
