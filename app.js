@@ -65,6 +65,7 @@ const state = {
   playlists: [],          // playlists Navidrome (liste)
   albums: [],             // albums Navidrome (collection, regroupée par tags)
   albumSort: "recent",    // tri courant de la vue Albums
+  favorites: new Set(),   // ids des morceaux favoris (cœurs pleins)
   playQueue: [],          // liste de lecture en cours (pour next/prev)
   queuedNext: [],         // morceaux insérés manuellement ("Lecture ensuite"), joués en priorité
   playHistory: [],        // pile des morceaux joués avant l'actuel (pour "précédent")
@@ -122,6 +123,83 @@ function toast(msg) {
 }
 
 // ---------------------------------------------------------------------------
+// Favoris — cœur cliquable. ON : télécharge + étoile Navidrome + playlist
+// "Favorite Songs". OFF : dé-étoile + retire de la playlist, et supprime le
+// fichier du NAS s'il n'est dans aucune autre playlist (confirmation demandée).
+// ---------------------------------------------------------------------------
+function favBtnHtml(track) {
+  const on = state.favorites.has(track.id);
+  return `<button class="fav-btn ${on ? "is-fav" : ""}" data-fav data-fav-id="${track.id}"
+    title="${on ? "Retirer des favoris" : "Ajouter aux favoris"}">${on ? "♥" : "♡"}</button>`;
+}
+
+// Attache la bascule au cœur d'une ligne déjà rendue.
+function wireFav(row, track) {
+  const btn = row.querySelector("[data-fav]");
+  if (btn) btn.addEventListener("click", (e) => { e.stopPropagation(); toggleFavorite(track, btn); });
+}
+
+// Met à jour toutes les occurrences du même morceau affichées à l'écran.
+function syncFavButtons(trackId) {
+  const on = state.favorites.has(trackId);
+  document.querySelectorAll(`[data-fav-id="${trackId}"]`).forEach((b) => {
+    b.classList.toggle("is-fav", on);
+    if (!b.dataset.busy) {
+      b.textContent = on ? "♥" : "♡";
+      b.title = on ? "Retirer des favoris" : "Ajouter aux favoris";
+    }
+  });
+}
+
+async function toggleFavorite(track, btn) {
+  if (btn.dataset.busy) return;
+  const willFav = !state.favorites.has(track.id);
+
+  // Décochage : peut entraîner la suppression du fichier -> on confirme.
+  if (!willFav && !confirm(
+    `Retirer « ${track.title} » des favoris ?\n\n`
+    + `Le morceau sera aussi supprimé du NAS, sauf s'il figure dans une autre playlist.`
+  )) return;
+
+  btn.dataset.busy = "1";
+  btn.classList.add("is-loading");
+  btn.textContent = "…";
+  try {
+    const res = await apiFetch("/api/favorite", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: track.id, title: track.title, artist: track.artist,
+        duration: track.duration, cover: track.cover || null, favorite: willFav,
+      }),
+    });
+    if (!res.ok) {
+      let m = `HTTP ${res.status}`;
+      try { m = (await res.json()).error || m; } catch {}
+      throw new Error(m);
+    }
+    const data = await res.json();
+    if (data.favorite) { state.favorites.add(track.id); toast("Ajouté aux favoris"); }
+    else { state.favorites.delete(track.id); toast(data.deleted ? "Retiré des favoris et supprimé du NAS" : "Retiré des favoris"); }
+    if (willFav || data.deleted) loadLibrary();   // la bibliothèque a changé
+  } catch (err) {
+    toast(`Favori : ${err.message}`);
+  } finally {
+    delete btn.dataset.busy;
+    btn.classList.remove("is-loading");
+    syncFavButtons(track.id);
+  }
+}
+
+async function loadFavorites() {
+  try {
+    const res = await apiFetch("/api/favorites");
+    if (!res.ok) return;
+    state.favorites = new Set(await res.json());
+  } catch { /* silencieux : les cœurs resteront vides */ }
+}
+
+// ---------------------------------------------------------------------------
 // Rendu — cartes (recherche/accueil)
 // ---------------------------------------------------------------------------
 function renderCard(track) {
@@ -136,7 +214,10 @@ function renderCard(track) {
       <div class="track-row-artist">${track.artist}</div>
     </div>
     <span class="track-row-status ${cached ? "cached" : "ondemand"}">${cached ? "Téléchargé" : "À la demande"}</span>
-    <button class="playlist-add-btn" data-add title="Ajouter à une playlist">＋</button>
+    <span class="row-actions">
+      ${favBtnHtml(track)}
+      <button class="playlist-add-btn" data-add title="Ajouter à une playlist">＋</button>
+    </span>
     <span class="track-row-duration" data-play title="Lire">▶</span>
   `;
   row.querySelector("[data-play]").addEventListener("click", (e) => {
@@ -147,6 +228,7 @@ function renderCard(track) {
     e.stopPropagation();
     openPlaylistPicker(e.currentTarget, track);
   });
+  wireFav(row, track);
   row.addEventListener("click", () => handleTrackActivate(track));
   return row;
 }
@@ -226,14 +308,18 @@ function renderPlaylistTrackRow(track, queueRaw, playlistId, editable) {
       <div class="track-row-artist">${track.artist}</div>
     </div>
     <span class="track-row-status cached">Navidrome</span>
-    <button class="row-action" title="Options">⋯</button>
+    <span class="row-actions">
+      ${favBtnHtml(track)}
+      <button class="row-action" title="Options">⋯</button>
+    </span>
     <span class="track-row-duration">${formatTime(track.duration)}</span>
   `;
   const queue = queueRaw.map((t) => ({ ...t, navidrome_id: t.id }));
   const self = { ...track, navidrome_id: track.id };
+  wireFav(row, track);
 
   row.addEventListener("click", (e) => {
-    if (e.target.closest(".row-action")) return;
+    if (e.target.closest(".row-action") || e.target.closest("[data-fav]")) return;
     playTrack(self, queue);
   });
 
@@ -491,11 +577,15 @@ function renderAlbumTrackRow(track, tracks) {
       <div class="track-row-artist">${track.artist}</div>
     </div>
     <span class="track-row-status cached">Navidrome</span>
-    <span></span>
+    <span class="row-actions">${favBtnHtml(track)}</span>
     <span class="track-row-duration">${formatTime(track.duration)}</span>
   `;
   const queue = tracks.map((t) => ({ ...t, navidrome_id: t.id }));
-  row.addEventListener("click", () => playTrack({ ...track, navidrome_id: track.id }, queue));
+  wireFav(row, track);
+  row.addEventListener("click", (e) => {
+    if (e.target.closest("[data-fav]")) return;
+    playTrack({ ...track, navidrome_id: track.id }, queue);
+  });
   return row;
 }
 
@@ -716,16 +806,20 @@ function renderCatalogTrackRow(track, tracks, album) {
       <div class="track-row-artist">${track.artist}</div>
     </div>
     <span class="track-row-status ${owned ? "cached" : ""}">${owned ? "Bibliothèque" : "Streaming"}</span>
-    <button class="row-action" title="${owned ? "Ajouter à une playlist" : "Télécharger sur le NAS"}">${owned ? "＋" : "⤓"}</button>
+    <span class="row-actions">
+      ${favBtnHtml(track)}
+      <button class="row-action" title="${owned ? "Ajouter à une playlist" : "Télécharger sur le NAS"}">${owned ? "＋" : "⤓"}</button>
+    </span>
     <span class="track-row-duration">${formatTime(track.duration)}</span>
   `;
 
   // Contexte de lecture : tout l'album, pour l'enchaînement des pistes.
   const queue = tracks.map((t) => ({ ...t, cover: t.cover || album.cover }));
   const self = { ...track, cover: track.cover || album.cover };
+  wireFav(row, self);
 
   row.addEventListener("click", (e) => {
-    if (e.target.closest(".row-action")) return;
+    if (e.target.closest(".row-action") || e.target.closest("[data-fav]")) return;
     const entry = byLibId(track.id);
     if (entry) playTrack(entry, state.library);      // possédé -> Navidrome
     else playTrack(self, queue);                     // sinon -> streaming direct
@@ -850,13 +944,17 @@ function renderArtistSongRow(track, tracks) {
       <div class="track-row-artist">${track.artist}</div>
     </div>
     <span class="track-row-status ${owned ? "cached" : ""}">${owned ? "Bibliothèque" : "Streaming"}</span>
-    <button class="row-action" title="${owned ? "Ajouter à une playlist" : "Télécharger sur le NAS"}">${owned ? "＋" : "⤓"}</button>
+    <span class="row-actions">
+      ${favBtnHtml(track)}
+      <button class="row-action" title="${owned ? "Ajouter à une playlist" : "Télécharger sur le NAS"}">${owned ? "＋" : "⤓"}</button>
+    </span>
     <span class="track-row-duration">${formatTime(track.duration)}</span>
   `;
   const queue = tracks.map((t) => ({ ...t }));
   const self = { ...track };
+  wireFav(row, self);
   row.addEventListener("click", (e) => {
-    if (e.target.closest(".row-action")) return;
+    if (e.target.closest(".row-action") || e.target.closest("[data-fav]")) return;
     const entry = byLibId(track.id);
     if (entry) playTrack(entry, state.library);
     else playTrack(self, queue);
@@ -1227,6 +1325,7 @@ function showAccessGate() {
 function unlockApp() {
   $("#accessGate").classList.add("is-hidden");
   document.body.classList.remove("is-locked");
+  loadFavorites();   // cœurs pleins dès le premier rendu
   loadLibrary();
 }
 
