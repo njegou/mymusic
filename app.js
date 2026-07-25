@@ -216,7 +216,7 @@ async function loadPlaylists() {
   renderPlaylistsList();
 }
 
-function renderPlaylistTrackRow(track, queueRaw, playlistId) {
+function renderPlaylistTrackRow(track, queueRaw, playlistId, editable) {
   const row = document.createElement("div");
   row.className = "track-row";
   row.innerHTML = `
@@ -239,11 +239,18 @@ function renderPlaylistTrackRow(track, queueRaw, playlistId) {
 
   row.querySelector(".row-action").addEventListener("click", (e) => {
     e.stopPropagation();
-    openTrackMenu(e.currentTarget, [
+    const items = [
       { label: "Lecture ensuite", icon: "▷", onClick: () => queueNext(self) },
-      { label: "Retirer de la playlist", icon: "🗑", danger: true,
-        onClick: () => removeFromPlaylist(playlistId, track.index, track.title, row) },
-    ]);
+    ];
+    // "Retirer" seulement si Navidrome autorise la modif (playlist possédée,
+    // non-smart). Sinon l'action échouerait avec "not authorized".
+    if (editable) {
+      items.push({
+        label: "Retirer de la playlist", icon: "🗑", danger: true,
+        onClick: () => removeFromPlaylist(playlistId, track.index, track.title, row),
+      });
+    }
+    openTrackMenu(e.currentTarget, items);
   });
   return row;
 }
@@ -263,7 +270,11 @@ async function removeFromPlaylist(playlistId, index, title, rowEl) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ index }),
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { msg = (await res.json()).error || msg; } catch {}
+      throw new Error(msg);
+    }
     // Recharge le détail : les index des morceaux suivants ont changé.
     toast(`« ${title} » retiré`);
     openPlaylistDetail(playlistId, $("#playlistDetailTitle").textContent);
@@ -319,7 +330,7 @@ async function openPlaylistDetail(id, name) {
       container.innerHTML = `<div class="empty-state">Playlist vide — ajoute des morceaux depuis la recherche (bouton ＋).</div>`;
       return;
     }
-    data.tracks.forEach((t) => container.appendChild(renderPlaylistTrackRow(t, data.tracks, id)));
+    data.tracks.forEach((t) => container.appendChild(renderPlaylistTrackRow(t, data.tracks, id, data.editable)));
   } catch (err) {
     container.innerHTML = `<div class="empty-state">Erreur : ${err.message}</div>`;
   }
