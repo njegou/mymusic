@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>mymusic</title>
-<link rel="stylesheet" href="style.css?v=11">
+<link rel="stylesheet" href="style.css?v=12">
 
 <!-- Page d'accès — styles autonomes (n'écrase rien de style.css) -->
 <style>
@@ -349,13 +349,23 @@
       </section>
 
       <section class="view is-hidden" id="view-import">
-        <h1 class="view-title">Importer un MP3</h1>
-        <p class="view-sub">Un fichier déjà sur ton disque — envoyé directement dans ta bibliothèque Navidrome.</p>
+        <h1 class="view-title">Importer</h1>
+        <p class="view-sub">Un ou plusieurs fichiers déjà sur ton disque — envoyés directement dans ta bibliothèque Navidrome.</p>
 
-        <label class="dropzone" id="dropzone" for="fileInput">
+        <div class="import-playlist-picker">
+          <label class="import-playlist-label" for="importPlaylistSelect">Playlist de destination</label>
+          <select id="importPlaylistSelect" class="import-playlist-select">
+            <option value="" selected disabled>Choisir une playlist…</option>
+            <option value="__new__">＋ Nouvelle playlist</option>
+          </select>
+          <input type="text" id="importNewPlaylistName" class="import-new-playlist-input is-hidden"
+                 placeholder="Nom de la nouvelle playlist" maxlength="100">
+        </div>
+
+        <label class="dropzone is-disabled" id="dropzone" for="fileInput">
           <span class="dropzone-icon">⇪</span>
-          <span class="dropzone-text">Glisse un fichier .mp3 ici, ou clique pour parcourir</span>
-          <input type="file" id="fileInput" accept=".mp3,audio/mpeg" hidden>
+          <span class="dropzone-text">Glisse un fichier .mp3 ou .zip ici, ou clique pour parcourir</span>
+          <input type="file" id="fileInput" accept=".mp3,audio/mpeg,.zip,application/zip" hidden>
         </label>
 
         <div id="importResult"></div>
@@ -416,6 +426,6 @@
   <div class="toast" id="toast"></div>
   <audio id="audioEl" preload="none"></audio>
 
-  <script src="app.js?v=11"></script>
+  <script src="app.js?v=12"></script>
 </body>
 </html>

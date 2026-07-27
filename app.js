@@ -13,6 +13,8 @@
      GET  /api/playlists/<id>              détail (morceaux)
      POST /api/playlists/<id>/tracks       { songId }
      GET  /api/stream-nd/<navidrome_id>    flux proxié Navidrome (préféré)
+     POST /upload  multipart: file (.mp3 ou .zip) + playlist_id OU playlist_name
+                    -> { tracks: [{filename,title,navidrome_id,added_to_playlist}], playlist: {id,name} }
    ========================================================================== */
 
 const $ = (sel) => document.querySelector(sel);
@@ -531,6 +533,9 @@ document.querySelectorAll(".nav-item").forEach((btn) => {
       $("#playlistsListWrap").classList.remove("is-hidden");
       loadPlaylists();
     }
+    if (btn.dataset.view === "import") {
+      populateImportPlaylistSelect();
+    }
   });
 });
 
@@ -932,13 +937,53 @@ function handleTrackActivate(track) {
 }
 
 // ---------------------------------------------------------------------------
-// Import — upload manuel d'un mp3 déjà présent sur le disque
+// Import — upload manuel d'un .mp3 ou .zip déjà présent sur le disque,
+// avec choix obligatoire d'une playlist de destination (existante ou nouvelle).
 // ---------------------------------------------------------------------------
 const dropzone = $("#dropzone");
 const fileInput = $("#fileInput");
+const importPlaylistSelect = $("#importPlaylistSelect");
+const importNewPlaylistName = $("#importNewPlaylistName");
+
+// Renvoie { playlist_id } ou { playlist_name } si un choix valide est fait,
+// sinon null (dropzone désactivée dans ce cas — voir syncImportDropzoneState).
+function currentImportPlaylistChoice() {
+  const val = importPlaylistSelect.value;
+  if (val === "__new__") {
+    const name = importNewPlaylistName.value.trim();
+    return name ? { playlist_name: name } : null;
+  }
+  return val ? { playlist_id: val } : null;
+}
+
+function syncImportDropzoneState() {
+  dropzone.classList.toggle("is-disabled", !currentImportPlaylistChoice());
+}
+
+async function populateImportPlaylistSelect() {
+  await loadPlaylists();
+  const previous = importPlaylistSelect.value;
+  importPlaylistSelect.innerHTML = `
+    <option value="" disabled>Choisir une playlist…</option>
+    <option value="__new__">＋ Nouvelle playlist</option>
+  ` + state.playlists.map((pl) =>
+    `<option value="${pl.id}">${pl.name} (${pl.songCount})</option>`
+  ).join("");
+  importPlaylistSelect.value = state.playlists.some((pl) => pl.id === previous) || previous === "__new__"
+    ? previous
+    : "";
+  syncImportDropzoneState();
+}
+
+importPlaylistSelect.addEventListener("change", () => {
+  importNewPlaylistName.classList.toggle("is-hidden", importPlaylistSelect.value !== "__new__");
+  if (importPlaylistSelect.value === "__new__") importNewPlaylistName.focus();
+  syncImportDropzoneState();
+});
+importNewPlaylistName.addEventListener("input", syncImportDropzoneState);
 
 fileInput.addEventListener("change", (e) => {
-  if (e.target.files[0]) uploadMp3(e.target.files[0]);
+  if (e.target.files[0]) uploadFile(e.target.files[0]);
   fileInput.value = "";
 });
 
@@ -956,12 +1001,18 @@ fileInput.addEventListener("change", (e) => {
 );
 dropzone.addEventListener("drop", (e) => {
   const file = e.dataTransfer.files[0];
-  if (file) uploadMp3(file);
+  if (file) uploadFile(file);
 });
 
-async function uploadMp3(file) {
-  if (!file.name.toLowerCase().endsWith(".mp3")) {
-    toast("Seuls les fichiers .mp3 sont acceptés.");
+async function uploadFile(file) {
+  const name = file.name.toLowerCase();
+  if (!name.endsWith(".mp3") && !name.endsWith(".zip")) {
+    toast("Seuls les fichiers .mp3 ou .zip sont acceptés.");
+    return;
+  }
+  const choice = currentImportPlaylistChoice();
+  if (!choice) {
+    toast("Choisis d'abord une playlist de destination.");
     return;
   }
 
@@ -970,28 +1021,44 @@ async function uploadMp3(file) {
 
   const formData = new FormData();
   formData.append("file", file);
+  if (choice.playlist_id) formData.append("playlist_id", choice.playlist_id);
+  if (choice.playlist_name) formData.append("playlist_name", choice.playlist_name);
 
   try {
     const res = await apiFetch("/upload", { method: "POST", body: formData });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const entry = await res.json();
-    toast(`"${file.name}" importé`);
-    renderImportResult(entry);
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error(body?.error || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    toast(`${data.tracks.length > 1 ? `${data.tracks.length} morceaux importés` : `"${file.name}" importé`} dans "${data.playlist.name}"`);
+    renderImportResult(data);
+    if (importPlaylistSelect.value === "__new__") {
+      importNewPlaylistName.value = "";
+      await populateImportPlaylistSelect();
+      importPlaylistSelect.value = data.playlist.id;
+      importNewPlaylistName.classList.add("is-hidden");
+      syncImportDropzoneState();
+    }
   } catch (err) {
     resultEl.innerHTML = `<div class="empty-state">Échec de l'import : ${err.message}</div>`;
   }
 }
 
-function renderImportResult(entry) {
+function renderImportResult(data) {
   const resultEl = $("#importResult");
   resultEl.innerHTML = "";
+  data.tracks.forEach((entry) => resultEl.appendChild(renderImportedTrackRow(entry, data.playlist.name)));
+}
+
+function renderImportedTrackRow(entry, playlistName) {
   const row = document.createElement("div");
   row.className = "track-row";
   row.innerHTML = `
     <div class="track-row-cover" style="background:${coverGradient(entry.filename)}">${initials(entry.title)}</div>
     <div>
       <div class="track-row-title">${entry.title}</div>
-      <div class="track-row-artist">${entry.navidrome_id ? (entry.added_to_playlist ? "Ajouté à « Morceaux importés »" : "Ajouté à ta bibliothèque") : "Indexation en cours…"}</div>
+      <div class="track-row-artist">${entry.navidrome_id ? (entry.added_to_playlist ? `Ajouté à « ${playlistName} »` : "Ajouté à ta bibliothèque") : "Indexation en cours…"}</div>
     </div>
     <span></span>
     <button class="playlist-add-btn" data-add title="Ajouter à une playlist">＋</button>
@@ -1001,7 +1068,7 @@ function renderImportResult(entry) {
     e.stopPropagation();
     openPlaylistPickerDirect(e.currentTarget, entry.navidrome_id);
   });
-  resultEl.appendChild(row);
+  return row;
 }
 
 // ---------------------------------------------------------------------------
