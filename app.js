@@ -14,6 +14,7 @@
      POST /api/playlists/<id>/tracks       { songId }
      GET  /api/playlists/<id>/cover?key=   pochette personnalisée (404 si aucune)
      POST /api/playlists/<id>/cover        { image: "data:image/jpeg;base64,..." } ou { image: null } pour retirer
+     POST /api/playlists/<id>/delete       supprime la playlist (les fichiers audio restent)
      GET  /api/stream-nd/<navidrome_id>    flux proxié Navidrome (préféré)
      POST /upload  multipart: file (audio ou .zip, champ répétable) + playlist_id OU playlist_name
                     -> 202 { job_id, total, rejected } — le NAS traite en tâche de fond
@@ -467,6 +468,7 @@ async function openPlaylistDetail(id, name) {
   $("#playlistDetailMeta").textContent = "";
   $("#playlistDetailCover").innerHTML = playlistCoverHtml({ id, name }, "playlist-hero-cover");
   $("#playlistCoverBtn").classList.add("is-hidden");
+  $("#playlistMenuBtn").classList.add("is-hidden");
   state.openPlaylist = { id, name, editable: false };
 
   const container = $("#playlistDetailTracks");
@@ -490,6 +492,7 @@ async function openPlaylistDetail(id, name) {
     // La pochette n'est personnalisable que sur les playlists qu'on possède
     // (une smart playlist ou une playlist partagée reste en lecture seule).
     $("#playlistCoverBtn").classList.toggle("is-hidden", !data.editable);
+    $("#playlistMenuBtn").classList.toggle("is-hidden", !data.editable);
 
     container.innerHTML = "";
     if (!tracks.length) {
@@ -562,7 +565,9 @@ $("#playlistCoverInput").addEventListener("change", async (e) => {
     const dataUrl = await squareJpegDataUrl(file);
     await sendPlaylistCover(pl.id, dataUrl);
     refreshPlaylistCovers(pl.id, pl.name);
-    toast("Pochette mise à jour");
+    // Le NAS retagge les morceaux importés en arrière-plan : leur pochette
+    // dans la vue Albums ne changera qu'après le scan Navidrome suivant.
+    toast("Pochette mise à jour — morceaux importés en cours d'alignement");
   } catch (err) {
     toast(`Pochette impossible : ${err.message}`);
   }
@@ -582,7 +587,7 @@ $("#playlistCoverBtn").addEventListener("click", (e) => {
         try {
           await sendPlaylistCover(pl.id, null);
           refreshPlaylistCovers(pl.id, pl.name);
-          toast("Pochette retirée");
+          toast("Pochette retirée — morceaux importés en cours d'alignement");
         } catch (err) {
           toast(`Suppression impossible : ${err.message}`);
         }
@@ -591,9 +596,53 @@ $("#playlistCoverBtn").addEventListener("click", (e) => {
   ]);
 });
 
-$("#backToPlaylistsBtn").addEventListener("click", () => {
+function showPlaylistsList() {
   $("#playlistDetailWrap").classList.add("is-hidden");
   $("#playlistsListWrap").classList.remove("is-hidden");
+  state.openPlaylist = null;
+}
+
+async function deletePlaylist(pl) {
+  // Une playlist n'est qu'une liste de renvois : les fichiers audio restent
+  // dans la bibliothèque. Le message doit le dire, sinon on hésite à cliquer.
+  if (!confirm(
+    `Supprimer la playlist « ${pl.name} » ?\n\n`
+    + `Les morceaux restent dans ta bibliothèque, seule la playlist disparaît.`
+  )) return;
+  try {
+    const res = await apiFetch(`/api/playlists/${encodeURIComponent(pl.id)}/delete`, {
+      method: "POST",
+    });
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { msg = (await res.json()).error || msg; } catch {}
+      throw new Error(msg);
+    }
+    showPlaylistsList();
+    toast(`Playlist « ${pl.name} » supprimée`);
+    loadPlaylists();
+  } catch (err) {
+    toast(`Suppression impossible : ${err.message}`);
+  }
+}
+
+$("#playlistMenuBtn").addEventListener("click", (e) => {
+  const pl = state.openPlaylist;
+  if (!pl) return;
+  openTrackMenu(e.currentTarget, [
+    {
+      label: "Changer la pochette", icon: "🖼",
+      onClick: () => $("#playlistCoverInput").click(),
+    },
+    {
+      label: "Supprimer la playlist", icon: "🗑", danger: true,
+      onClick: () => deletePlaylist(pl),
+    },
+  ]);
+});
+
+$("#backToPlaylistsBtn").addEventListener("click", () => {
+  showPlaylistsList();
 });
 
 $("#createPlaylistBtn").addEventListener("click", async () => {
