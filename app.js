@@ -1031,6 +1031,108 @@ dropzone.addEventListener("drop", (e) => {
   if (files.length) uploadFiles(files);
 });
 
+// ---------------------------------------------------------------------------
+// Ouverture des .zip dans le navigateur
+// ---------------------------------------------------------------------------
+// Une archive part en un seul morceau : impossible à découper, donc refusée
+// par Cloudflare dès 100 Mo. On l'éclate ici en fichiers individuels, que le
+// découpage en lots sait ensuite faire passer. Lecture du "central directory"
+// en fin d'archive, plus fiable que d'enchaîner les en-têtes locaux.
+const ZIP_EOCD_SIG = 0x06054b50;
+const ZIP_CD_SIG = 0x02014b50;
+
+function findZipEOCD(view) {
+  // Le commentaire d'archive peut atteindre 65535 octets : on remonte depuis
+  // la fin jusqu'à la signature.
+  const max = Math.min(view.byteLength, 65535 + 22);
+  for (let i = 22; i <= max; i++) {
+    const off = view.byteLength - i;
+    if (view.getUint32(off, true) === ZIP_EOCD_SIG) return off;
+  }
+  return -1;
+}
+
+function readZipEntries(buffer) {
+  const view = new DataView(buffer);
+  const eocd = findZipEOCD(view);
+  if (eocd < 0) throw new Error("archive illisible");
+
+  const count = view.getUint16(eocd + 10, true);
+  const cdOffset = view.getUint32(eocd + 16, true);
+  // Zip64 : les champs 32 bits saturent au-delà de 4 Go.
+  if (cdOffset === 0xffffffff || count === 0xffff) {
+    throw new Error("archive zip64 non supportée");
+  }
+
+  const entries = [];
+  let p = cdOffset;
+  for (let i = 0; i < count; i++) {
+    if (view.getUint32(p, true) !== ZIP_CD_SIG) break;
+    const method = view.getUint16(p + 10, true);
+    const compressedSize = view.getUint32(p + 20, true);
+    const nameLen = view.getUint16(p + 28, true);
+    const extraLen = view.getUint16(p + 30, true);
+    const commentLen = view.getUint16(p + 32, true);
+    const localOffset = view.getUint32(p + 42, true);
+    const name = new TextDecoder("utf-8").decode(new Uint8Array(buffer, p + 46, nameLen));
+    entries.push({ name, method, compressedSize, localOffset });
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  return entries;
+}
+
+async function extractZipEntry(buffer, entry) {
+  const view = new DataView(buffer);
+  // L'en-tête local a ses propres longueurs de nom/extra, souvent différentes
+  // de celles du central directory : il faut les relire ici.
+  const nameLen = view.getUint16(entry.localOffset + 26, true);
+  const extraLen = view.getUint16(entry.localOffset + 28, true);
+  const start = entry.localOffset + 30 + nameLen + extraLen;
+  const raw = buffer.slice(start, start + entry.compressedSize);
+
+  if (entry.method === 0) return raw;   // stocké tel quel
+  if (entry.method !== 8) throw new Error(`compression ${entry.method} non supportée`);
+  const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  return await new Response(stream).arrayBuffer();
+}
+
+// Remplace chaque .zip de la sélection par les fichiers audio qu'il contient.
+// Les autres fichiers passent tels quels.
+async function expandZips(files, onProgress) {
+  const out = [];
+  const failed = [];
+  for (const file of files) {
+    if (fileExtension(file.name) !== ".zip") {
+      out.push(file);
+      continue;
+    }
+    try {
+      if (onProgress) onProgress(`Ouverture de ${file.name}…`);
+      const buffer = await file.arrayBuffer();
+      const entries = readZipEntries(buffer).filter((e) => {
+        const base = e.name.split("/").pop();
+        return base && !base.startsWith(".") && AUDIO_EXTENSIONS.includes(fileExtension(base));
+      });
+      if (!entries.length) {
+        failed.push({ filename: file.name, reason: "aucun fichier audio dans l'archive" });
+        continue;
+      }
+      for (const entry of entries) {
+        const base = entry.name.split("/").pop();
+        if (onProgress) onProgress(`Extraction de ${base}…`);
+        const data = await extractZipEntry(buffer, entry);
+        out.push(new File([data], base, { type: "application/octet-stream" }));
+      }
+    } catch (err) {
+      // Repli : on laisse l'archive telle quelle, le NAS sait aussi la dézipper.
+      // Elle ne passera que si elle tient sous la limite de taille.
+      console.warn(`Zip non ouvert côté navigateur (${file.name}) :`, err);
+      out.push(file);
+    }
+  }
+  return { files: out, failed };
+}
+
 // Cloudflare (plan gratuit) refuse tout corps de requête au-delà de 100 Mo :
 // la requête est bloquée à la frontière, sans en-têtes CORS, ce que le
 // navigateur signale comme une erreur CORS trompeuse. On découpe donc
@@ -1064,21 +1166,7 @@ function formatSize(bytes) {
     : `${Math.round(bytes / 1024)} ko`;
 }
 
-async function uploadFiles(files) {
-  const tooBig = files.filter((f) => f.size > SINGLE_FILE_MAX_BYTES);
-  const sized = files.filter((f) => f.size <= SINGLE_FILE_MAX_BYTES);
-  const accepted = sized.filter((f) => ACCEPTED_EXTENSIONS.includes(fileExtension(f.name)));
-  const refused = sized.filter((f) => !ACCEPTED_EXTENSIONS.includes(fileExtension(f.name)));
-
-  if (!accepted.length) {
-    toast(tooBig.length
-      ? `Fichier trop volumineux (${formatSize(tooBig[0].size)}). Passe par File Station.`
-      : (files.length === 1
-          ? `Format non supporté : ${files[0].name}`
-          : "Aucun fichier audio dans cette sélection."));
-    return;
-  }
-
+async function uploadFiles(rawFiles) {
   const choice = currentImportPlaylistChoice();
   if (!choice) {
     toast("Choisis d'abord une playlist de destination.");
@@ -1086,9 +1174,32 @@ async function uploadFiles(files) {
   }
 
   const resultEl = $("#importResult");
+
+  // Les archives sont ouvertes ici : un .zip de 105 Mo ne franchirait jamais
+  // le tunnel d'un bloc, alors que les pistes qu'il contient passent en lots.
+  const { files, failed: zipFailed } = await expandZips(rawFiles, (msg) =>
+    renderImportProgress(resultEl, msg, 0, 1)
+  );
+
+  const tooBig = files.filter((f) => f.size > SINGLE_FILE_MAX_BYTES);
+  const sized = files.filter((f) => f.size <= SINGLE_FILE_MAX_BYTES);
+  const accepted = sized.filter((f) => ACCEPTED_EXTENSIONS.includes(fileExtension(f.name)));
+  const refused = sized.filter((f) => !ACCEPTED_EXTENSIONS.includes(fileExtension(f.name)));
+
+  if (!accepted.length) {
+    resultEl.innerHTML = "";
+    toast(tooBig.length
+      ? `Fichier trop volumineux (${formatSize(tooBig[0].size)}). Passe par File Station.`
+      : (rawFiles.length === 1
+          ? `Format non supporté : ${rawFiles[0].name}`
+          : "Aucun fichier audio dans cette sélection."));
+    return;
+  }
+
   const batches = splitIntoBatches(accepted);
   const allTracks = [];
   const allRejected = [
+    ...zipFailed,
     ...refused.map((f) => ({ filename: f.name, reason: "format non supporté" })),
     ...tooBig.map((f) => ({
       filename: f.name,
