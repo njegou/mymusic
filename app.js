@@ -14,8 +14,8 @@
      POST /api/playlists/<id>/tracks       { songId }
      GET  /api/stream-nd/<navidrome_id>    flux proxié Navidrome (préféré)
      POST /upload  multipart: file (audio ou .zip, champ répétable) + playlist_id OU playlist_name
-                    -> { tracks: [{filename,title,artist,navidrome_id,added_to_playlist}],
-                         rejected: [{filename,reason}], playlist: {id,name} }
+                    -> 202 { job_id, total, rejected } — le NAS traite en tâche de fond
+     GET  /api/import/<job_id>   suivi : { state, step, done, total, tracks, rejected, playlist }
                     Formats : mp3/m4a/flac gardés tels quels, le reste (wav, opus,
                     alac, wma...) transcodé en MP3 côté NAS.
    ========================================================================== */
@@ -1031,14 +1031,51 @@ dropzone.addEventListener("drop", (e) => {
   if (files.length) uploadFiles(files);
 });
 
+// Cloudflare (plan gratuit) refuse tout corps de requête au-delà de 100 Mo :
+// la requête est bloquée à la frontière, sans en-têtes CORS, ce que le
+// navigateur signale comme une erreur CORS trompeuse. On découpe donc
+// l'envoi en lots. Marge volontairement large : le multipart ajoute son
+// propre encodage par-dessus la taille des fichiers.
+const UPLOAD_BATCH_MAX_BYTES = 70 * 1024 * 1024;
+
+// Un fichier seul au-delà de cette taille ne passera par aucun découpage.
+const SINGLE_FILE_MAX_BYTES = 95 * 1024 * 1024;
+
+function splitIntoBatches(files) {
+  const batches = [];
+  let current = [];
+  let size = 0;
+  for (const f of files) {
+    if (current.length && size + f.size > UPLOAD_BATCH_MAX_BYTES) {
+      batches.push(current);
+      current = [];
+      size = 0;
+    }
+    current.push(f);
+    size += f.size;
+  }
+  if (current.length) batches.push(current);
+  return batches;
+}
+
+function formatSize(bytes) {
+  return bytes >= 1024 * 1024
+    ? `${Math.round(bytes / 1024 / 1024)} Mo`
+    : `${Math.round(bytes / 1024)} ko`;
+}
+
 async function uploadFiles(files) {
-  const accepted = files.filter((f) => ACCEPTED_EXTENSIONS.includes(fileExtension(f.name)));
-  const refused = files.filter((f) => !ACCEPTED_EXTENSIONS.includes(fileExtension(f.name)));
+  const tooBig = files.filter((f) => f.size > SINGLE_FILE_MAX_BYTES);
+  const sized = files.filter((f) => f.size <= SINGLE_FILE_MAX_BYTES);
+  const accepted = sized.filter((f) => ACCEPTED_EXTENSIONS.includes(fileExtension(f.name)));
+  const refused = sized.filter((f) => !ACCEPTED_EXTENSIONS.includes(fileExtension(f.name)));
 
   if (!accepted.length) {
-    toast(files.length === 1
-      ? `Format non supporté : ${files[0].name}`
-      : "Aucun fichier audio dans cette sélection.");
+    toast(tooBig.length
+      ? `Fichier trop volumineux (${formatSize(tooBig[0].size)}). Passe par File Station.`
+      : (files.length === 1
+          ? `Format non supporté : ${files[0].name}`
+          : "Aucun fichier audio dans cette sélection."));
     return;
   }
 
@@ -1049,45 +1086,114 @@ async function uploadFiles(files) {
   }
 
   const resultEl = $("#importResult");
-  const willTranscode = accepted.some((f) => TRANSCODED_EXTENSIONS.includes(fileExtension(f.name)));
-  const label = accepted.length === 1 ? `"${accepted[0].name}"` : `${accepted.length} fichiers`;
-  resultEl.innerHTML = `<div class="empty-state">Envoi de ${label}…${
-    willTranscode ? "<br>Conversion en MP3 sur le NAS, ça peut prendre une minute." : ""
-  }</div>`;
+  const batches = splitIntoBatches(accepted);
+  const allTracks = [];
+  const allRejected = [
+    ...refused.map((f) => ({ filename: f.name, reason: "format non supporté" })),
+    ...tooBig.map((f) => ({
+      filename: f.name,
+      reason: `trop volumineux (${formatSize(f.size)}) pour le tunnel`,
+    })),
+  ];
+  let playlistInfo = null;
+  // Le 1er lot peut créer la playlist ; les suivants doivent la viser par id,
+  // sinon on se retrouverait avec plusieurs playlists du même nom.
+  let target = { ...choice };
 
-  const formData = new FormData();
-  accepted.forEach((f) => formData.append("file", f));   // champ répété = liste côté serveur
-  if (choice.playlist_id) formData.append("playlist_id", choice.playlist_id);
-  if (choice.playlist_name) formData.append("playlist_name", choice.playlist_name);
+  for (let b = 0; b < batches.length; b++) {
+    const batch = batches[b];
+    const prefix = batches.length > 1 ? `Lot ${b + 1}/${batches.length} — ` : "";
 
-  try {
-    const res = await apiFetch("/upload", { method: "POST", body: formData });
-    if (!res.ok) {
-      const body = await res.json().catch(() => null);
-      throw new Error(body?.error || `HTTP ${res.status}`);
+    try {
+      renderImportProgress(resultEl, prefix + `Envoi de ${batch.length} fichier(s)…`, 0, batch.length);
+
+      const formData = new FormData();
+      batch.forEach((f) => formData.append("file", f));
+      if (target.playlist_id) formData.append("playlist_id", target.playlist_id);
+      if (target.playlist_name) formData.append("playlist_name", target.playlist_name);
+
+      const res = await apiFetch("/upload", { method: "POST", body: formData });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `HTTP ${res.status}`);
+      }
+      const start = await res.json();
+      allRejected.push(...(start.rejected || []));
+
+      // Le NAS convertit en tâche de fond : on suit l'avancement plutôt que
+      // de laisser la requête ouverte (Cloudflare la couperait à 100 s).
+      const job = await pollImportJob(start.job_id, prefix, resultEl);
+      allTracks.push(...(job.tracks || []));
+      allRejected.push(...(job.rejected || []));
+      if (job.playlist) {
+        playlistInfo = job.playlist;
+        target = { playlist_id: job.playlist.id };
+      }
+    } catch (err) {
+      allRejected.push(...batch.map((f) => ({
+        filename: f.name,
+        reason: `échec de l'envoi : ${err.message}`,
+      })));
     }
-    const data = await res.json();
-    const n = data.tracks.length;
-    toast(`${n > 1 ? `${n} morceaux importés` : `"${data.tracks[0]?.filename || label}" importé`} dans "${data.playlist.name}"`);
-    // Les fichiers écartés par le navigateur rejoignent ceux écartés par le NAS.
-    const rejected = [
-      ...(data.rejected || []),
-      ...refused.map((f) => ({ filename: f.name, reason: "format non supporté" })),
-    ];
-    renderImportResult({ ...data, rejected });
-    if (importPlaylistSelect.value === "__new__") {
-      importNewPlaylistName.value = "";
-      await populateImportPlaylistSelect();
-      importPlaylistSelect.value = data.playlist.id;
-      importNewPlaylistName.classList.add("is-hidden");
-      syncImportDropzoneState();
+  }
+
+  const playlist = playlistInfo || { id: "", name: choice.playlist_name || "la playlist" };
+  if (allTracks.length) {
+    toast(`${allTracks.length > 1 ? `${allTracks.length} morceaux importés` : "1 morceau importé"} dans "${playlist.name}"`);
+  } else {
+    toast("Aucun morceau importé.");
+  }
+  renderImportResult({ tracks: allTracks, rejected: allRejected, playlist });
+
+  if (importPlaylistSelect.value === "__new__" && playlistInfo) {
+    importNewPlaylistName.value = "";
+    await populateImportPlaylistSelect();
+    importPlaylistSelect.value = playlistInfo.id;
+    importNewPlaylistName.classList.add("is-hidden");
+    syncImportDropzoneState();
+  }
+}
+
+function renderImportProgress(el, label, done, total) {
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  el.innerHTML = `
+    <div class="empty-state">
+      <div>${label}</div>
+      <div style="margin-top:10px;height:4px;background:#2c2c33;border-radius:2px;overflow:hidden">
+        <div style="height:100%;width:${pct}%;background:#ffa8de;transition:width .3s ease"></div>
+      </div>
+    </div>`;
+}
+
+// Interroge /api/import/<id> jusqu'à la fin. Intervalle volontairement lâche :
+// le DS218 a mieux à faire que répondre à un sondage serré pendant qu'il
+// transcode.
+async function pollImportJob(jobId, prefix, resultEl) {
+  const DELAY_MS = 2000;
+  const MAX_SILENCE_MS = 10 * 60 * 1000;   // garde-fou si le serveur redémarre
+  const startedAt = Date.now();
+
+  while (true) {
+    await new Promise((r) => setTimeout(r, DELAY_MS));
+
+    let job;
+    try {
+      const res = await apiFetch(`/api/import/${jobId}`);
+      if (res.status === 404) throw new Error("import introuvable (serveur redémarré ?)");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      job = await res.json();
+    } catch (err) {
+      if (Date.now() - startedAt > MAX_SILENCE_MS) throw err;
+      continue;   // coupure réseau passagère : on retente
     }
-  } catch (err) {
-    // Un gros lot peut dépasser le temps d'attente du navigateur alors que le
-    // NAS finit correctement : on le dit plutôt que d'annoncer un échec sec.
-    resultEl.innerHTML = `<div class="empty-state">Échec de l'import : ${err.message}${
-      willTranscode ? "<br>Si la conversion était longue, l'import a pu aboutir malgré tout — vérifie la playlist." : ""
-    }</div>`;
+
+    renderImportProgress(resultEl, prefix + (job.step || "Traitement…"), job.done, job.total);
+
+    if (job.state === "done") return job;
+    if (job.state === "error") throw new Error(job.error || "import échoué");
+    if (Date.now() - startedAt > MAX_SILENCE_MS) {
+      throw new Error("délai dépassé — vérifie le log du NAS");
+    }
   }
 }
 
