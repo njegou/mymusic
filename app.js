@@ -10,8 +10,10 @@
      GET  /api/stream/<youtube_id>         repli si pas encore sur Navidrome
      GET  /api/playlists                   liste des playlists Navidrome
      POST /api/playlists    { name }
-     GET  /api/playlists/<id>              détail (morceaux)
+     GET  /api/playlists/<id>              détail : { tracks, editable, songCount, duration, changed }
      POST /api/playlists/<id>/tracks       { songId }
+     GET  /api/playlists/<id>/cover?key=   pochette personnalisée (404 si aucune)
+     POST /api/playlists/<id>/cover        { image: "data:image/jpeg;base64,..." } ou { image: null } pour retirer
      GET  /api/stream-nd/<navidrome_id>    flux proxié Navidrome (préféré)
      POST /upload  multipart: file (audio ou .zip, champ répétable) + playlist_id OU playlist_name
                     -> 202 { job_id, total, rejected } — le NAS traite en tâche de fond
@@ -62,12 +64,24 @@ function coverUrlWithKey(coverArt) {
   return `${apiUrl("/api/cover/" + encodeURIComponent(coverArt))}?key=${encodeURIComponent(getApiKey())}`;
 }
 
+// Pochette personnalisée d'une playlist. Le backend renvoie 404 si aucune image
+// n'a été déposée : c'est le onerror du <img> qui déclenche alors le repli sur
+// la vignette dégradé + initiales. Le paramètre ?v= force le rafraîchissement
+// juste après un upload (sinon le navigateur resservirait l'ancienne image).
+function playlistCoverUrl(playlistId) {
+  const v = state.playlistCoverV[playlistId] || 0;
+  return `${apiUrl("/api/playlists/" + encodeURIComponent(playlistId) + "/cover")}`
+    + `?key=${encodeURIComponent(getApiKey())}&v=${v}`;
+}
+
 // ---------------------------------------------------------------------------
 // État
 // ---------------------------------------------------------------------------
 const state = {
   library: [],            // tout ce que CET outil a téléchargé (suivi local)
   playlists: [],          // playlists Navidrome (liste)
+  playlistCoverV: {},     // { playlistId: timestamp } — cache-buster des pochettes custom
+  openPlaylist: null,     // { id, name, editable } de la playlist affichée en détail
   favorites: new Set(),   // ids des morceaux favoris (cœurs pleins)
   playQueue: [],          // liste de lecture en cours (pour next/prev)
   queuedNext: [],         // morceaux insérés manuellement ("Lecture ensuite"), joués en priorité
@@ -98,6 +112,37 @@ function formatTime(sec) {
   const s = Math.floor(sec % 60).toString().padStart(2, "0");
   return `${m}:${s}`;
 }
+// Durée cumulée d'une playlist : "42 min" en dessous d'une heure, "1 h 07"
+// au-delà. formatTime() reste réservé aux durées de morceaux (m:ss).
+function formatDurationLong(sec) {
+  if (!isFinite(sec) || sec <= 0) return null;
+  const totalMin = Math.round(sec / 60);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (!h) return `${totalMin} min`;
+  return m ? `${h} h ${String(m).padStart(2, "0")}` : `${h} h`;
+}
+
+// "12 juil. 2026" — Navidrome renvoie du ISO 8601 dans l'attribut `changed`.
+function formatDateShort(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  return d.toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" });
+}
+
+// Ligne de détails affichée à côté du nom : "14 morceaux · 52 min · maj 12 juil. 2026".
+// Chaque segment est optionnel — si le backend ne renvoie pas encore `changed`,
+// la date disparaît simplement au lieu d'afficher un trou.
+function playlistMetaText(songCount, duration, changed) {
+  const parts = [`${songCount} morceau${songCount > 1 ? "x" : ""}`];
+  const dur = formatDurationLong(duration);
+  if (dur) parts.push(dur);
+  const date = formatDateShort(changed);
+  if (date) parts.push(`maj ${date}`);
+  return parts.join(" · ");
+}
+
 function coverGradient(seed) {
   let hash = 0;
   for (const c of String(seed)) hash = (hash * 31 + c.charCodeAt(0)) % 360;
@@ -114,6 +159,17 @@ function coverHtml(track, seed, cls = "track-row-cover", fillParent = false) {
     : "";
   return `<div class="${cls}" style="${size}background:${grad};position:relative;overflow:hidden;">${fallback}${img}</div>`;
 }
+// Vignette d'une playlist : pochette personnalisée si elle existe, sinon
+// dégradé + initiales. Même mécanique de repli que coverHtml() (onerror).
+function playlistCoverHtml(pl, cls = "track-row-cover") {
+  return `<div class="${cls}" style="background:${coverGradient(pl.id)};position:relative;overflow:hidden;">`
+    + `${initials(pl.name)}`
+    + `<img src="${playlistCoverUrl(pl.id)}" alt="" loading="lazy"`
+    + ` style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;"`
+    + ` onerror="this.remove()">`
+    + `</div>`;
+}
+
 function initials(title) {
   return (title || "?").split(" ").slice(0, 2).map((w) => w[0]).join("").toUpperCase();
 }
@@ -268,10 +324,10 @@ function renderPlaylistRow(pl) {
   const row = document.createElement("div");
   row.className = "track-row";
   row.innerHTML = `
-    <div class="track-row-cover" style="background:${coverGradient(pl.id)}">${initials(pl.name)}</div>
+    ${playlistCoverHtml(pl)}
     <div>
       <div class="track-row-title">${pl.name}</div>
-      <div class="track-row-artist">${pl.songCount || 0} morceau(x)</div>
+      <div class="track-row-artist">${playlistMetaText(pl.songCount || 0, pl.duration, pl.changed)}</div>
     </div>
     <span></span><span></span><span></span>
   `;
@@ -408,22 +464,132 @@ async function openPlaylistDetail(id, name) {
   $("#playlistsListWrap").classList.add("is-hidden");
   $("#playlistDetailWrap").classList.remove("is-hidden");
   $("#playlistDetailTitle").textContent = name;
+  $("#playlistDetailMeta").textContent = "";
+  $("#playlistDetailCover").innerHTML = playlistCoverHtml({ id, name }, "playlist-hero-cover");
+  $("#playlistCoverBtn").classList.add("is-hidden");
+  state.openPlaylist = { id, name, editable: false };
+
   const container = $("#playlistDetailTracks");
   container.innerHTML = `<div class="empty-state">Chargement…</div>`;
   try {
     const res = await apiFetch(`/api/playlists/${encodeURIComponent(id)}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+
+    // Compteur et durée : on privilégie ce que renvoie Navidrome, avec repli
+    // sur un calcul local — la page reste juste même si le backend n'a pas
+    // encore été mis à jour.
+    const tracks = data.tracks || [];
+    const songCount = typeof data.songCount === "number" ? data.songCount : tracks.length;
+    const duration = typeof data.duration === "number"
+      ? data.duration
+      : tracks.reduce((sum, t) => sum + (Number(t.duration) || 0), 0);
+    $("#playlistDetailMeta").textContent = playlistMetaText(songCount, duration, data.changed);
+
+    state.openPlaylist = { id, name, editable: !!data.editable };
+    // La pochette n'est personnalisable que sur les playlists qu'on possède
+    // (une smart playlist ou une playlist partagée reste en lecture seule).
+    $("#playlistCoverBtn").classList.toggle("is-hidden", !data.editable);
+
     container.innerHTML = "";
-    if (!data.tracks.length) {
+    if (!tracks.length) {
       container.innerHTML = `<div class="empty-state">Playlist vide — ajoute des morceaux depuis la recherche (bouton ＋).</div>`;
       return;
     }
-    data.tracks.forEach((t) => container.appendChild(renderPlaylistTrackRow(t, data.tracks, id, data.editable)));
+    tracks.forEach((t) => container.appendChild(renderPlaylistTrackRow(t, tracks, id, data.editable)));
   } catch (err) {
     container.innerHTML = `<div class="empty-state">Erreur : ${err.message}</div>`;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Pochette personnalisée — l'image est recadrée en carré et redimensionnée
+// DANS LE NAVIGATEUR avant l'envoi. Le NAS (512 Mo de RAM) ne reçoit donc
+// qu'un JPEG de ~60 Ko, jamais la photo brute de 5 Mo.
+// ---------------------------------------------------------------------------
+function squareJpegDataUrl(file, size = 600) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("fichier illisible"));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("format d'image non supporté par le navigateur"));
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = size;
+        const ctx = canvas.getContext("2d");
+        // Recadrage centré : on prend le plus grand carré possible dans l'image.
+        const side = Math.min(img.naturalWidth, img.naturalHeight);
+        const sx = (img.naturalWidth - side) / 2;
+        const sy = (img.naturalHeight - side) / 2;
+        ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
+        resolve(canvas.toDataURL("image/jpeg", 0.85));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function sendPlaylistCover(playlistId, dataUrl) {
+  const res = await apiFetch(`/api/playlists/${encodeURIComponent(playlistId)}/cover`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image: dataUrl }),
+  });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try { msg = (await res.json()).error || msg; } catch {}
+    throw new Error(msg);
+  }
+  // Nouvelle version -> les <img> rechargent au lieu de resservir le cache.
+  state.playlistCoverV[playlistId] = Date.now();
+}
+
+function refreshPlaylistCovers(playlistId, name) {
+  $("#playlistDetailCover").innerHTML =
+    playlistCoverHtml({ id: playlistId, name }, "playlist-hero-cover");
+  renderPlaylistsList();
+}
+
+$("#playlistCoverInput").addEventListener("change", async (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = "";  // permet de re-sélectionner le même fichier ensuite
+  const pl = state.openPlaylist;
+  if (!file || !pl) return;
+  try {
+    toast("Préparation de la pochette…");
+    const dataUrl = await squareJpegDataUrl(file);
+    await sendPlaylistCover(pl.id, dataUrl);
+    refreshPlaylistCovers(pl.id, pl.name);
+    toast("Pochette mise à jour");
+  } catch (err) {
+    toast(`Pochette impossible : ${err.message}`);
+  }
+});
+
+$("#playlistCoverBtn").addEventListener("click", (e) => {
+  const pl = state.openPlaylist;
+  if (!pl) return;
+  openTrackMenu(e.currentTarget, [
+    {
+      label: "Choisir une image", icon: "🖼",
+      onClick: () => $("#playlistCoverInput").click(),
+    },
+    {
+      label: "Retirer la pochette", icon: "🗑", danger: true,
+      onClick: async () => {
+        try {
+          await sendPlaylistCover(pl.id, null);
+          refreshPlaylistCovers(pl.id, pl.name);
+          toast("Pochette retirée");
+        } catch (err) {
+          toast(`Suppression impossible : ${err.message}`);
+        }
+      },
+    },
+  ]);
+});
 
 $("#backToPlaylistsBtn").addEventListener("click", () => {
   $("#playlistDetailWrap").classList.add("is-hidden");
