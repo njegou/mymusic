@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>mymusic</title>
-<link rel="stylesheet" href="style.css?v=12">
+<link rel="stylesheet" href="style.css?v=13">
 
 <!-- Page d'accès — styles autonomes (n'écrase rien de style.css) -->
 <style>
@@ -364,8 +364,9 @@
 
         <label class="dropzone is-disabled" id="dropzone" for="fileInput">
           <span class="dropzone-icon">⇪</span>
-          <span class="dropzone-text">Glisse un fichier .mp3 ou .zip ici, ou clique pour parcourir</span>
-          <input type="file" id="fileInput" accept=".mp3,audio/mpeg,.zip,application/zip" hidden>
+          <span class="dropzone-text">Glisse tes fichiers audio ou un .zip ici, ou clique pour parcourir</span>
+          <input type="file" id="fileInput" multiple
+                 accept=".mp3,.m4a,.m4b,.aac,.flac,.wav,.wave,.aif,.aiff,.aifc,.ogg,.oga,.opus,.wma,.ape,.wv,.mpc,.zip,audio/*,application/zip" hidden>
         </label>
 
         <div id="importResult"></div>
@@ -426,6 +427,6 @@
   <div class="toast" id="toast"></div>
   <audio id="audioEl" preload="none"></audio>
 
-  <script src="app.js?v=12"></script>
+  <script src="app.js?v=13"></script>
 </body>
 </html>
