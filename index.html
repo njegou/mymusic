@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>mymusic</title>
-<link rel="stylesheet" href="style.css?v=15">
+<link rel="stylesheet" href="style.css?v=16">
 
 <!-- Page d'accès — styles autonomes (n'écrase rien de style.css) -->
 <style>
@@ -343,7 +343,17 @@
 
         <div id="playlistDetailWrap" class="is-hidden">
           <button class="back-btn" id="backToPlaylistsBtn">← Playlists</button>
-          <h1 class="view-title" id="playlistDetailTitle">—</h1>
+          <div class="playlist-hero">
+            <div class="playlist-hero-cover-wrap">
+              <div id="playlistDetailCover"></div>
+              <button class="playlist-cover-btn is-hidden" id="playlistCoverBtn" title="Personnaliser la pochette">🖼</button>
+              <input type="file" id="playlistCoverInput" accept="image/*" hidden>
+            </div>
+            <div class="playlist-hero-text">
+              <h1 class="view-title" id="playlistDetailTitle">—</h1>
+              <span class="playlist-meta" id="playlistDetailMeta"></span>
+            </div>
+          </div>
           <div class="track-list" id="playlistDetailTracks"></div>
         </div>
       </section>
@@ -427,6 +437,6 @@
   <div class="toast" id="toast"></div>
   <audio id="audioEl" preload="none"></audio>
 
-  <script src="app.js?v=15"></script>
+  <script src="app.js?v=16"></script>
 </body>
 </html>
