@@ -282,6 +282,7 @@ input{ font-family: inherit; }
 }
 .playlist-hero-text{
   display:flex; align-items:baseline; flex-wrap:wrap; gap: 4px 12px;
+  flex: 1; min-width: 0;
 }
 .playlist-hero-text .view-title{ margin-bottom: 0; }
 .playlist-meta{
@@ -303,6 +304,15 @@ input{ font-family: inherit; }
 .playlist-cover-btn:hover{ background: rgba(123,97,255,.85); }
 /* Pas de survol au doigt : le bouton reste visible sur écran tactile. */
 @media (hover: none){ .playlist-cover-btn{ opacity: 1; } }
+
+.playlist-menu-btn{
+  flex-shrink:0; align-self:center;
+  color: var(--text-muted);
+  font-size: 18px; line-height:1;
+  padding: 6px 10px; border-radius: 8px;
+  transition: color .15s ease, background .15s ease;
+}
+.playlist-menu-btn:hover{ color: var(--text); background: var(--surface-2); }
 
 .playlist-add-btn{
   color: var(--text-muted);
