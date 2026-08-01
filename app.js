@@ -13,8 +13,11 @@
      GET  /api/playlists/<id>              détail (morceaux)
      POST /api/playlists/<id>/tracks       { songId }
      GET  /api/stream-nd/<navidrome_id>    flux proxié Navidrome (préféré)
-     POST /upload  multipart: file (.mp3 ou .zip) + playlist_id OU playlist_name
-                    -> { tracks: [{filename,title,navidrome_id,added_to_playlist}], playlist: {id,name} }
+     POST /upload  multipart: file (audio ou .zip, champ répétable) + playlist_id OU playlist_name
+                    -> { tracks: [{filename,title,artist,navidrome_id,added_to_playlist}],
+                         rejected: [{filename,reason}], playlist: {id,name} }
+                    Formats : mp3/m4a/flac gardés tels quels, le reste (wav, opus,
+                    alac, wma...) transcodé en MP3 côté NAS.
    ========================================================================== */
 
 const $ = (sel) => document.querySelector(sel);
@@ -937,13 +940,37 @@ function handleTrackActivate(track) {
 }
 
 // ---------------------------------------------------------------------------
-// Import — upload manuel d'un .mp3 ou .zip déjà présent sur le disque,
+// Import — upload manuel de fichiers audio déjà présents sur le disque,
 // avec choix obligatoire d'une playlist de destination (existante ou nouvelle).
+// Tous les fichiers d'une sélection partent dans UNE seule requête : le NAS
+// ne déclenche alors qu'un scan Navidrome pour l'ensemble, au lieu d'un par
+// fichier (chaque scan coûte plusieurs secondes sur le DS218).
 // ---------------------------------------------------------------------------
 const dropzone = $("#dropzone");
 const fileInput = $("#fileInput");
 const importPlaylistSelect = $("#importPlaylistSelect");
 const importNewPlaylistName = $("#importNewPlaylistName");
+
+// Doit rester aligné sur AUDIO_EXTENSIONS dans upload_server.py.
+const AUDIO_EXTENSIONS = [
+  ".mp3", ".m4a", ".m4b", ".mp4", ".aac", ".flac",
+  ".wav", ".wave", ".aif", ".aiff", ".aifc",
+  ".ogg", ".oga", ".opus", ".wma", ".ape", ".wv", ".mpc",
+];
+const ACCEPTED_EXTENSIONS = [...AUDIO_EXTENSIONS, ".zip"];
+
+// Formats que le NAS doit transcoder : sert uniquement à prévenir l'utilisateur
+// que l'import prendra plus longtemps (la décision réelle se prend côté serveur
+// sur le codec, pas sur l'extension — un .m4a en ALAC est converti, en AAC non).
+const TRANSCODED_EXTENSIONS = [
+  ".wav", ".wave", ".aif", ".aiff", ".aifc",
+  ".ogg", ".oga", ".opus", ".wma", ".ape", ".wv", ".mpc",
+];
+
+function fileExtension(name) {
+  const i = name.lastIndexOf(".");
+  return i < 0 ? "" : name.slice(i).toLowerCase();
+}
 
 // Renvoie { playlist_id } ou { playlist_name } si un choix valide est fait,
 // sinon null (dropzone désactivée dans ce cas — voir syncImportDropzoneState).
@@ -983,7 +1010,7 @@ importPlaylistSelect.addEventListener("change", () => {
 importNewPlaylistName.addEventListener("input", syncImportDropzoneState);
 
 fileInput.addEventListener("change", (e) => {
-  if (e.target.files[0]) uploadFile(e.target.files[0]);
+  if (e.target.files.length) uploadFiles(Array.from(e.target.files));
   fileInput.value = "";
 });
 
@@ -1000,16 +1027,21 @@ fileInput.addEventListener("change", (e) => {
   })
 );
 dropzone.addEventListener("drop", (e) => {
-  const file = e.dataTransfer.files[0];
-  if (file) uploadFile(file);
+  const files = Array.from(e.dataTransfer.files || []);
+  if (files.length) uploadFiles(files);
 });
 
-async function uploadFile(file) {
-  const name = file.name.toLowerCase();
-  if (!name.endsWith(".mp3") && !name.endsWith(".zip")) {
-    toast("Seuls les fichiers .mp3 ou .zip sont acceptés.");
+async function uploadFiles(files) {
+  const accepted = files.filter((f) => ACCEPTED_EXTENSIONS.includes(fileExtension(f.name)));
+  const refused = files.filter((f) => !ACCEPTED_EXTENSIONS.includes(fileExtension(f.name)));
+
+  if (!accepted.length) {
+    toast(files.length === 1
+      ? `Format non supporté : ${files[0].name}`
+      : "Aucun fichier audio dans cette sélection.");
     return;
   }
+
   const choice = currentImportPlaylistChoice();
   if (!choice) {
     toast("Choisis d'abord une playlist de destination.");
@@ -1017,10 +1049,14 @@ async function uploadFile(file) {
   }
 
   const resultEl = $("#importResult");
-  resultEl.innerHTML = `<div class="empty-state">Envoi de "${file.name}"…</div>`;
+  const willTranscode = accepted.some((f) => TRANSCODED_EXTENSIONS.includes(fileExtension(f.name)));
+  const label = accepted.length === 1 ? `"${accepted[0].name}"` : `${accepted.length} fichiers`;
+  resultEl.innerHTML = `<div class="empty-state">Envoi de ${label}…${
+    willTranscode ? "<br>Conversion en MP3 sur le NAS, ça peut prendre une minute." : ""
+  }</div>`;
 
   const formData = new FormData();
-  formData.append("file", file);
+  accepted.forEach((f) => formData.append("file", f));   // champ répété = liste côté serveur
   if (choice.playlist_id) formData.append("playlist_id", choice.playlist_id);
   if (choice.playlist_name) formData.append("playlist_name", choice.playlist_name);
 
@@ -1031,8 +1067,14 @@ async function uploadFile(file) {
       throw new Error(body?.error || `HTTP ${res.status}`);
     }
     const data = await res.json();
-    toast(`${data.tracks.length > 1 ? `${data.tracks.length} morceaux importés` : `"${file.name}" importé`} dans "${data.playlist.name}"`);
-    renderImportResult(data);
+    const n = data.tracks.length;
+    toast(`${n > 1 ? `${n} morceaux importés` : `"${data.tracks[0]?.filename || label}" importé`} dans "${data.playlist.name}"`);
+    // Les fichiers écartés par le navigateur rejoignent ceux écartés par le NAS.
+    const rejected = [
+      ...(data.rejected || []),
+      ...refused.map((f) => ({ filename: f.name, reason: "format non supporté" })),
+    ];
+    renderImportResult({ ...data, rejected });
     if (importPlaylistSelect.value === "__new__") {
       importNewPlaylistName.value = "";
       await populateImportPlaylistSelect();
@@ -1041,7 +1083,11 @@ async function uploadFile(file) {
       syncImportDropzoneState();
     }
   } catch (err) {
-    resultEl.innerHTML = `<div class="empty-state">Échec de l'import : ${err.message}</div>`;
+    // Un gros lot peut dépasser le temps d'attente du navigateur alors que le
+    // NAS finit correctement : on le dit plutôt que d'annoncer un échec sec.
+    resultEl.innerHTML = `<div class="empty-state">Échec de l'import : ${err.message}${
+      willTranscode ? "<br>Si la conversion était longue, l'import a pu aboutir malgré tout — vérifie la playlist." : ""
+    }</div>`;
   }
 }
 
@@ -1049,16 +1095,39 @@ function renderImportResult(data) {
   const resultEl = $("#importResult");
   resultEl.innerHTML = "";
   data.tracks.forEach((entry) => resultEl.appendChild(renderImportedTrackRow(entry, data.playlist.name)));
+  (data.rejected || []).forEach((entry) => resultEl.appendChild(renderRejectedRow(entry)));
+}
+
+function renderRejectedRow(entry) {
+  // Styles en ligne : style.css n'a pas de classe pour cet état, autant ne pas
+  // dépendre d'une feuille à modifier en parallèle.
+  const row = document.createElement("div");
+  row.className = "track-row";
+  row.style.opacity = "0.55";
+  row.innerHTML = `
+    <div class="track-row-cover" style="background:#3a3a42;color:#8a8a93">✕</div>
+    <div>
+      <div class="track-row-title">${entry.filename}</div>
+      <div class="track-row-artist">Non importé — ${entry.reason}</div>
+    </div>
+    <span></span><span></span><span></span>
+  `;
+  return row;
 }
 
 function renderImportedTrackRow(entry, playlistName) {
   const row = document.createElement("div");
   row.className = "track-row";
+  const status = entry.navidrome_id
+    ? (entry.added_to_playlist ? `Ajouté à « ${playlistName} »` : "Ajouté à ta bibliothèque")
+    : "Indexation en cours…";
+  // L'artiste vient des tags lus par le NAS ; absent sur un fichier mal taggé.
+  const subtitle = entry.artist ? `${entry.artist} · ${status}` : status;
   row.innerHTML = `
     <div class="track-row-cover" style="background:${coverGradient(entry.filename)}">${initials(entry.title)}</div>
     <div>
       <div class="track-row-title">${entry.title}</div>
-      <div class="track-row-artist">${entry.navidrome_id ? (entry.added_to_playlist ? `Ajouté à « ${playlistName} »` : "Ajouté à ta bibliothèque") : "Indexation en cours…"}</div>
+      <div class="track-row-artist">${subtitle}</div>
     </div>
     <span></span>
     <button class="playlist-add-btn" data-add title="Ajouter à une playlist">＋</button>
