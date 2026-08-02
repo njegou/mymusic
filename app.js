@@ -720,6 +720,25 @@ async function deletePlaylist(pl) {
   }
 }
 
+async function resyncPlaylistImports(pl) {
+  try {
+    const res = await apiFetch(
+      `/api/playlists/${encodeURIComponent(pl.id)}/resync-imports`, { method: "POST" });
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { msg = (await res.json()).error || msg; } catch {}
+      throw new Error(msg);
+    }
+    const data = await res.json();
+    toast(data.added
+      ? `${data.added} morceau${data.added > 1 ? "x" : ""} rattaché${data.added > 1 ? "s" : ""} aux imports`
+      : "Aucun morceau importé à rattacher");
+    if (data.added) openPlaylistDetail(pl.id, pl.name);
+  } catch (err) {
+    toast(`Rattachement impossible : ${err.message}`);
+  }
+}
+
 $("#playlistMenuBtn").addEventListener("click", (e) => {
   const pl = state.openPlaylist;
   if (!pl) return;
@@ -727,6 +746,10 @@ $("#playlistMenuBtn").addEventListener("click", (e) => {
     {
       label: "Changer la pochette", icon: "🖼",
       onClick: () => $("#playlistCoverInput").click(),
+    },
+    {
+      label: "Rattacher les imports", icon: "🔗",
+      onClick: () => resyncPlaylistImports(pl),
     },
     {
       label: "Supprimer la playlist", icon: "🗑", danger: true,
