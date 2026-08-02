@@ -60,6 +60,9 @@ function streamUrlWithKey(path) {
 
 // Pochette d'album proxifiée depuis Navidrome. Un <img src> ne peut pas porter
 // de header X-API-Key, donc la clé passe en ?key= (même principe que le stream).
+// Jeton incrémenté à chaque ouverture de playlist (cf. openPlaylistDetail).
+let playlistRequestToken = 0;
+
 function coverUrlWithKey(coverArt) {
   if (!coverArt) return null;
   return `${apiUrl("/api/cover/" + encodeURIComponent(coverArt))}?key=${encodeURIComponent(getApiKey())}`;
@@ -470,6 +473,10 @@ function updateQueueBadge() {
 }
 
 async function openPlaylistDetail(id, name) {
+  // Jeton de requête : ouvrir une grosse playlist puis une petite fait revenir
+  // les réponses dans le désordre, et la plus lente écrasait l'affichage de la
+  // plus récente. Toute réponse dont le jeton a été périmé est ignorée.
+  const token = ++playlistRequestToken;
   $("#playlistsListWrap").classList.add("is-hidden");
   $("#playlistDetailWrap").classList.remove("is-hidden");
   $("#playlistDetailTitle").textContent = name;
@@ -483,8 +490,10 @@ async function openPlaylistDetail(id, name) {
   container.innerHTML = `<div class="empty-state">Chargement…</div>`;
   try {
     const res = await apiFetch(`/api/playlists/${encodeURIComponent(id)}`);
+    if (token !== playlistRequestToken) return;
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    if (token !== playlistRequestToken) return;
 
     // Compteur et durée : on privilégie ce que renvoie Navidrome, avec repli
     // sur un calcul local — la page reste juste même si le backend n'a pas
@@ -512,6 +521,7 @@ async function openPlaylistDetail(id, name) {
     }
     tracks.forEach((t) => container.appendChild(renderPlaylistTrackRow(t, tracks, id, data.editable)));
   } catch (err) {
+    if (token !== playlistRequestToken) return;
     container.innerHTML = `<div class="empty-state">Erreur : ${err.message}</div>`;
   }
 }
