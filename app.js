@@ -364,6 +364,12 @@ async function loadPlaylists() {
 function renderPlaylistTrackRow(track, queueRaw, playlistId, editable) {
   const row = document.createElement("div");
   row.className = "track-row";
+  // Le glisser-déposer n'a de sens que si Navidrome accepte de réécrire la
+  // playlist (playlist possédée, non-smart).
+  if (editable) {
+    row.draggable = true;
+    row.dataset.songId = track.id;
+  }
   row.innerHTML = `
     ${coverHtml(track, track.id)}
     <div>
@@ -399,8 +405,24 @@ function renderPlaylistTrackRow(track, queueRaw, playlistId, editable) {
         onClick: () => openRenameModal(track, playlistId),
       });
     }
-    // "Retirer" seulement si Navidrome autorise la modif (playlist possédée,
-    // non-smart). Sinon l'action échouerait avec "not authorized".
+    // Déplacement à la carte : le glisser-déposer HTML5 ignore le tactile et
+    // reste capricieux selon le navigateur. Ces deux entrées fonctionnent
+    // partout, iPhone compris.
+    if (editable) {
+      const total = queueRaw.length;
+      if (track.index > 0) {
+        items.push({
+          label: "Monter", icon: "↑",
+          onClick: () => moveTrack(playlistId, track.index, -1),
+        });
+      }
+      if (track.index < total - 1) {
+        items.push({
+          label: "Descendre", icon: "↓",
+          onClick: () => moveTrack(playlistId, track.index, +1),
+        });
+      }
+    }
     if (editable) {
       items.push({
         label: "Retirer de la playlist", icon: "🗑", danger: true,
@@ -519,7 +541,11 @@ async function openPlaylistDetail(id, name) {
       container.innerHTML = `<div class="empty-state">Playlist vide — ajoute des morceaux depuis la recherche (bouton ＋).</div>`;
       return;
     }
-    tracks.forEach((t) => container.appendChild(renderPlaylistTrackRow(t, tracks, id, data.editable)));
+    tracks.forEach((t) => {
+      const row = renderPlaylistTrackRow(t, tracks, id, data.editable);
+      if (data.editable) wireReorder(row, container, id);
+      container.appendChild(row);
+    });
   } catch (err) {
     if (token !== playlistRequestToken) return;
     container.innerHTML = `<div class="empty-state">Erreur : ${err.message}</div>`;
@@ -689,6 +715,94 @@ $("#renameModal").addEventListener("click", (e) => {
     if (e.key === "Escape") closeRenameModal();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Réordonnancement d'une playlist par glisser-déposer
+// ---------------------------------------------------------------------------
+// Déplace d'un cran le morceau situé à `index`. delta = -1 (monter) ou +1.
+async function moveTrack(playlistId, index, delta) {
+  const container = $("#playlistDetailTracks");
+  const ids = [...container.querySelectorAll("[data-song-id]")]
+    .map((el) => el.dataset.songId);
+  const target = index + delta;
+  if (target < 0 || target >= ids.length) return;
+  [ids[index], ids[target]] = [ids[target], ids[index]];
+  await savePlaylistOrder(playlistId, null, ids);
+}
+
+let dragSongId = null;
+
+function wireReorder(row, container, playlistId) {
+  row.addEventListener("dragstart", (e) => {
+    dragSongId = row.dataset.songId;
+    row.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    // Firefox n'amorce pas le glissement sans données attachées.
+    e.dataTransfer.setData("text/plain", dragSongId);
+  });
+
+  row.addEventListener("dragend", () => {
+    row.classList.remove("dragging");
+    container.querySelectorAll(".drop-before, .drop-after")
+      .forEach((el) => el.classList.remove("drop-before", "drop-after"));
+    dragSongId = null;
+  });
+
+  row.addEventListener("dragover", (e) => {
+    if (!dragSongId || row.dataset.songId === dragSongId) return;
+    e.preventDefault();
+    // Au-dessus de la moitié haute -> insertion avant, sinon après.
+    const rect = row.getBoundingClientRect();
+    const before = e.clientY < rect.top + rect.height / 2;
+    row.classList.toggle("drop-before", before);
+    row.classList.toggle("drop-after", !before);
+  });
+
+  row.addEventListener("dragleave", (e) => {
+    // dragleave se déclenche aussi en passant d'un enfant de la ligne à un
+    // autre : sans ce test, le repère d'insertion clignote et disparaît
+    // parfois juste avant le dépôt.
+    if (!row.contains(e.relatedTarget)) {
+      row.classList.remove("drop-before", "drop-after");
+    }
+  });
+
+  row.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const before = row.classList.contains("drop-before");
+    row.classList.remove("drop-before", "drop-after");
+    const dragged = container.querySelector(`[data-song-id="${dragSongId}"]`);
+    if (!dragged || dragged === row) return;
+    container.insertBefore(dragged, before ? row : row.nextSibling);
+    savePlaylistOrder(playlistId, container);
+  });
+}
+
+async function savePlaylistOrder(playlistId, container, explicitIds = null) {
+  const songIds = explicitIds
+    || [...container.querySelectorAll("[data-song-id]")].map((el) => el.dataset.songId);
+  try {
+    const res = await apiFetch(`/api/playlists/${encodeURIComponent(playlistId)}/reorder`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ songIds }),
+    });
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { msg = (await res.json()).error || msg; } catch {}
+      throw new Error(msg);
+    }
+    toast("Ordre enregistré");
+    // Les index de chaque ligne ont changé : on redessine pour que "Monter",
+    // "Descendre" et "Retirer" visent toujours la bonne position.
+    if (state.openPlaylist) openPlaylistDetail(playlistId, state.openPlaylist.name);
+  } catch (err) {
+    toast(`Ordre non enregistré : ${err.message}`);
+    // L'affichage a déjà bougé : on recharge pour ne pas laisser un ordre
+    // à l'écran qui ne correspond pas à ce qui est stocké.
+    if (state.openPlaylist) openPlaylistDetail(playlistId, state.openPlaylist.name);
+  }
+}
 
 function showPlaylistsList() {
   $("#playlistDetailWrap").classList.add("is-hidden");
