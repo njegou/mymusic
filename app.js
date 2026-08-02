@@ -388,6 +388,14 @@ function renderPlaylistTrackRow(track, queueRaw, playlistId, editable) {
     const items = [
       { label: "Lecture ensuite", icon: "▷", onClick: () => queueNext(self) },
     ];
+    // Renommage réservé aux fichiers venus d'un import : les morceaux
+    // téléchargés tiennent leurs tags de YouTube Music.
+    if (track.imported) {
+      items.push({
+        label: "Renommer", icon: "✎",
+        onClick: () => openRenameModal(track, playlistId),
+      });
+    }
     // "Retirer" seulement si Navidrome autorise la modif (playlist possédée,
     // non-smart). Sinon l'action échouerait avec "not authorized".
     if (editable) {
@@ -597,6 +605,79 @@ $("#playlistCoverBtn").addEventListener("click", (e) => {
       },
     },
   ]);
+});
+
+// ---------------------------------------------------------------------------
+// Renommage d'un morceau importé
+// ---------------------------------------------------------------------------
+let renameTarget = null;   // { id, playlistId } du morceau en cours d'édition
+
+function openRenameModal(track, playlistId) {
+  renameTarget = { id: track.id, playlistId };
+  $("#renameTitle").value = track.title || "";
+  // "Inconnu"/"[Unknown Artist]" sont des étiquettes de repli, pas de vraies
+  // valeurs : on présente un champ vide plutôt que de les faire recopier.
+  const artist = track.artist || "";
+  $("#renameArtist").value = /^(inconnu|\[?unknown artist\]?)$/i.test(artist) ? "" : artist;
+  $("#renameModal").classList.remove("is-hidden");
+  $("#renameTitle").focus();
+  $("#renameTitle").select();
+}
+
+function closeRenameModal() {
+  $("#renameModal").classList.add("is-hidden");
+  $("#renameSave").disabled = false;
+  $("#renameSave").textContent = "Enregistrer";
+  renameTarget = null;
+}
+
+async function saveRename() {
+  if (!renameTarget) return;
+  const title = $("#renameTitle").value.trim();
+  if (!title) { toast("Le titre ne peut pas être vide"); return; }
+  const artist = $("#renameArtist").value.trim();
+  const { id, playlistId } = renameTarget;
+
+  // Le backend attend la fin du réindexage avant de répondre : quelques
+  // secondes, d'où le bouton verrouillé plutôt qu'un simple toast.
+  $("#renameSave").disabled = true;
+  $("#renameSave").textContent = "Enregistrement…";
+  try {
+    const res = await apiFetch(`/api/tracks/${encodeURIComponent(id)}/rename`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, artist }),
+    });
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { msg = (await res.json()).error || msg; } catch {}
+      throw new Error(msg);
+    }
+    const data = await res.json();
+    closeRenameModal();
+    toast(data.indexed
+      ? `Renommé en « ${title} »`
+      : `Renommé — Navidrome termine son indexation`);
+    if (playlistId && state.openPlaylist && state.openPlaylist.id === playlistId) {
+      openPlaylistDetail(playlistId, state.openPlaylist.name);
+    }
+  } catch (err) {
+    $("#renameSave").disabled = false;
+    $("#renameSave").textContent = "Enregistrer";
+    toast(`Renommage impossible : ${err.message}`);
+  }
+}
+
+$("#renameSave").addEventListener("click", saveRename);
+$("#renameCancel").addEventListener("click", closeRenameModal);
+$("#renameModal").addEventListener("click", (e) => {
+  if (e.target === $("#renameModal")) closeRenameModal();
+});
+["#renameTitle", "#renameArtist"].forEach((sel) => {
+  $(sel).addEventListener("keydown", (e) => {
+    if (e.key === "Enter") saveRename();
+    if (e.key === "Escape") closeRenameModal();
+  });
 });
 
 function showPlaylistsList() {
