@@ -325,18 +325,16 @@ function updateStorageMeter() {
 // Rendu — playlists (liste + détail)
 // ---------------------------------------------------------------------------
 function renderPlaylistRow(pl) {
-  const row = document.createElement("div");
-  row.className = "track-row";
-  row.innerHTML = `
-    ${playlistCoverHtml(pl)}
-    <div>
-      <div class="track-row-title">${pl.name}</div>
-      <div class="track-row-artist">${playlistMetaText(pl.songCount || 0, pl.duration, pl.changed)}</div>
-    </div>
-    <span></span><span></span><span></span>
+  const card = document.createElement("div");
+  card.className = "playlist-card";
+  // Les détails (nombre, durée, date) ne sont plus ici : ils apparaissent
+  // dans l'en-tête au clic. La carte ne montre que pochette et nom.
+  card.innerHTML = `
+    ${playlistCoverHtml(pl, "playlist-card-cover")}
+    <div class="playlist-card-name">${pl.name}</div>
   `;
-  row.addEventListener("click", () => openPlaylistDetail(pl.id, pl.name));
-  return row;
+  card.addEventListener("click", () => openPlaylistDetail(pl.id, pl.name));
+  return card;
 }
 
 function renderPlaylistsList() {
