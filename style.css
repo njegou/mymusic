@@ -134,6 +134,11 @@ input{ font-family: inherit; }
 }
 .search-box input::placeholder{ color: var(--text-muted); }
 
+/* Masquage générique. Elle manquait : seules trois variantes ciblées
+   (.view, .access-gate, .queue-badge) existaient, donc sur tous les autres
+   éléments la classe .is-hidden posée par app.js n'avait aucun effet. */
+.is-hidden{ display: none !important; }
+
 .view.is-hidden{ display:none; }
 .view-title{ font-size: 24px; font-weight: 800; letter-spacing:-0.02em; margin-bottom: 6px; }
 .view-sub{ color: var(--text-muted); font-size: 13.5px; margin-bottom: 24px; max-width: 620px; line-height:1.5; }
