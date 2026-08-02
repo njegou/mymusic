@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>mymusic</title>
-<link rel="stylesheet" href="style.css?v=18">
+<link rel="stylesheet" href="style.css?v=19">
 
 <!-- Page d'accès — styles autonomes (n'écrase rien de style.css) -->
 <style>
@@ -438,6 +438,21 @@
   <div class="toast" id="toast"></div>
   <audio id="audioEl" preload="none"></audio>
 
-  <script src="app.js?v=18"></script>
+  <div class="modal-backdrop is-hidden" id="renameModal">
+    <div class="modal">
+      <h2 class="modal-title">Renommer le morceau</h2>
+      <label class="modal-label" for="renameTitle">Titre</label>
+      <input class="modal-input" id="renameTitle" type="text" autocomplete="off" spellcheck="false">
+      <label class="modal-label" for="renameArtist">Artiste</label>
+      <input class="modal-input" id="renameArtist" type="text" autocomplete="off" spellcheck="false">
+      <p class="modal-hint">Les tags du fichier sont réécrits, puis Navidrome réindexe. La pochette et la place dans les playlists sont conservées.</p>
+      <div class="modal-actions">
+        <button class="modal-btn" id="renameCancel">Annuler</button>
+        <button class="modal-btn primary" id="renameSave">Enregistrer</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=19"></script>
 </body>
 </html>
