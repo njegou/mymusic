@@ -482,6 +482,9 @@ async function openPlaylistDetail(id, name) {
     // sur un calcul local — la page reste juste même si le backend n'a pas
     // encore été mis à jour.
     const tracks = data.tracks || [];
+    // La pochette réellement embarquée dans le fichier, servie par le proxy
+    // Navidrome. Pour un morceau importé, c'est celle de la playlist.
+    tracks.forEach((t) => { t.cover = t.cover || coverUrlWithKey(t.coverArt); });
     const songCount = typeof data.songCount === "number" ? data.songCount : tracks.length;
     const duration = typeof data.duration === "number"
       ? data.duration
