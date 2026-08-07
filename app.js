@@ -997,11 +997,28 @@ function activateView(view) {
 // Recherche live avec pagination
 // ---------------------------------------------------------------------------
 let searchDebounce = null;
+let searchAbort = null;        // contrôleur de la requête encore en vol
+let searchToken = 0;           // invalide les réponses d'une recherche périmée
+
+const SEARCH_TIMEOUT_MS = 20000;
+
+// Annule la requête en cours et invalide sa réponse. Sans ça, une recherche
+// lente lancée sur "blind" pouvait écraser le résultat de "blinding lights"
+// arrivé entre-temps.
+function cancelInFlightSearch() {
+  searchToken++;
+  if (searchAbort) {
+    searchAbort.abort("superseded");
+    searchAbort = null;
+  }
+}
+
 $("#searchInput").addEventListener("input", (e) => {
   activateView("search");
   const q = e.target.value.trim();
 
   clearTimeout(searchDebounce);
+  cancelInFlightSearch();
   state.search = { query: q, page: 0, results: [] };
 
   if (!q) {
@@ -1016,12 +1033,51 @@ $("#searchInput").addEventListener("input", (e) => {
   searchDebounce = setTimeout(() => runSearch(q, 0), 350);
 });
 
+// Traduit une erreur de fetch en message exploitable.
+//
+// Un fetch qui échoue SANS statut HTTP signifie que la réponse n'est jamais
+// arrivée jusqu'au JS : NAS arrêté, tunnel Cloudflare tombé, ou page d'erreur
+// 502 renvoyée sans en-tête Access-Control-Allow-Origin. Le navigateur
+// présente ça comme une erreur réseau, ce qui ressemble à un problème de CORS
+// alors que la config CORS n'a rien à voir.
+function describeSearchError(err) {
+  if (err && err.name === "AbortError") {
+    // signal.reason vaut "timeout" ou "superseded" selon l'origine.
+    const reason = err.reason || (searchAbort && searchAbort.signal.reason);
+    return reason === "timeout"
+      ? "délai dépassé (20 s), le NAS met trop de temps à répondre — un import est peut-être en cours"
+      : null;   // annulation volontaire : on n'affiche rien
+  }
+  const status = err && err.status;
+  if (status === 500) return "erreur serveur — voir upload_server.log sur le NAS";
+  if (status === 502 || status === 503) return "le serveur mymusic ne répond pas (arrêté, ou saturé par un import)";
+  if (status === 504 || status === 524) return "le NAS a mis trop de temps à répondre (délai Cloudflare dépassé)";
+  if (status === 401 || status === 403) return "accès refusé, ressaisis le mot de passe";
+  if (status) return `erreur HTTP ${status}`;
+  if (!navigator.onLine) return "pas de connexion réseau";
+  return "serveur injoignable — le NAS ou le tunnel Cloudflare ne répond pas";
+}
+
 async function runSearch(q, page) {
-  if (page === 0) { runAlbumSearch(q); runArtistSearch(q); }   // en parallèle
+  const token = ++searchToken;
+
+  const ctrl = new AbortController();
+  searchAbort = ctrl;
+  const timer = setTimeout(() => ctrl.abort("timeout"), SEARCH_TIMEOUT_MS);
+
   try {
-    const res = await apiFetch(`/api/search?q=${encodeURIComponent(q)}&page=${page}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const res = await apiFetch(
+      `/api/search?q=${encodeURIComponent(q)}&page=${page}`,
+      { signal: ctrl.signal }
+    );
+    if (!res.ok) {
+      const e = new Error(`HTTP ${res.status}`);
+      e.status = res.status;
+      throw e;
+    }
     const results = await res.json();
+
+    if (token !== searchToken) return;   // une frappe plus récente a pris le relais
 
     if (page === 0) {
       state.search = { query: q, page: 0, results };
@@ -1033,8 +1089,28 @@ async function runSearch(q, page) {
     $("#searchSub").textContent = `${state.search.results.length} résultat(s) chargé(s) — lecture en streaming, téléchargement sur le NAS uniquement si ajouté à une playlist.`;
     renderSearchResults(results.length === PAGE_SIZE);
   } catch (err) {
-    $("#searchSub").textContent = `Erreur de recherche : ${err.message}. Vérifie l'URL du backend et le CORS.`;
-    if (page === 0) renderGrid($("#searchGrid"), [], "");
+    if (token !== searchToken) return;
+    if (err && err.name === "AbortError") err.reason = ctrl.signal.reason;
+    const msg = describeSearchError(err);
+    if (msg) {
+      $("#searchSub").textContent = `Erreur de recherche : ${msg}.`;
+      if (page === 0) renderGrid($("#searchGrid"), [], "");
+    }
+    return;
+  } finally {
+    clearTimeout(timer);
+    if (searchAbort === ctrl) searchAbort = null;
+  }
+
+  // Albums puis artistes, SÉQUENTIELLEMENT et seulement une fois les morceaux
+  // affichés. Auparavant ces trois requêtes partaient en parallèle : sur un
+  // HTTPServer mono-thread qui spawn un subprocess Python par recherche, elles
+  // se bloquaient mutuellement (~10 s cumulés) et saturaient le backlog TCP —
+  // ce que Cloudflare traduit en 502, sans en-tête CORS.
+  if (page === 0) {
+    await runAlbumSearch(q, token);
+    if (token !== searchToken) return;
+    await runArtistSearch(q, token);
   }
 }
 
@@ -1062,14 +1138,16 @@ function renderSearchResults(mayHaveMore) {
 //   - piste déjà en bibliothèque -> lecture via Navidrome
 //   - piste absente              -> lecture directe (rien n'est écrit sur le NAS)
 // ---------------------------------------------------------------------------
-async function runAlbumSearch(q) {
+async function runAlbumSearch(q, token) {
   const wrap = $("#searchAlbums");
   wrap.innerHTML = `<div class="album-strip-title">Albums</div><div class="empty-state">Recherche d'albums…</div>`;
   wrap.classList.remove("is-hidden");
   try {
     const res = await apiFetch(`/api/search-albums?q=${encodeURIComponent(q)}&limit=6`);
+    if (token != null && token !== searchToken) return;   // recherche périmée
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const albums = await res.json();
+    if (token != null && token !== searchToken) return;
     if (!Array.isArray(albums) || !albums.length) {
       wrap.classList.add("is-hidden");
       return;
@@ -1201,14 +1279,16 @@ $("#backToSearchBtn").addEventListener("click", () => activateView("search"));
 // Les morceaux se lisent/téléchargent comme ceux d'un album ; les albums et
 // singles rebranchent sur openCatalogAlbum (la vue album déjà construite).
 // ---------------------------------------------------------------------------
-async function runArtistSearch(q) {
+async function runArtistSearch(q, token) {
   const wrap = $("#searchArtists");
   wrap.innerHTML = `<div class="album-strip-title">Artistes</div><div class="empty-state">Recherche d'artistes…</div>`;
   wrap.classList.remove("is-hidden");
   try {
     const res = await apiFetch(`/api/search-artists?q=${encodeURIComponent(q)}&limit=4`);
+    if (token != null && token !== searchToken) return;   // recherche périmée
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const artists = await res.json();
+    if (token != null && token !== searchToken) return;
     if (!Array.isArray(artists) || !artists.length) {
       wrap.classList.add("is-hidden");
       return;
