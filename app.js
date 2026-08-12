@@ -212,6 +212,18 @@ function syncFavButtons(trackId) {
       b.title = on ? "Retirer des favoris" : "Ajouter aux favoris";
     }
   });
+  updatePlayerLike();
+}
+
+// Cœur de la barre de lecture : reflète l'état favori du morceau en cours.
+function updatePlayerLike() {
+  const btn = $("#playerLike");
+  if (!btn) return;
+  const t = state.currentTrackObj;
+  const on = !!(t && state.favorites.has(t.id));
+  btn.classList.toggle("is-fav", on);
+  btn.title = on ? "Retirer des favoris" : "Ajouter aux favoris";
+  btn.disabled = !t;
 }
 
 async function toggleFavorite(track, btn) {
@@ -305,12 +317,65 @@ function renderGrid(container, tracks, emptyMsg) {
   tracks.forEach((t) => container.appendChild(renderCard(t)));
 }
 
+function greetingText() {
+  const h = new Date().getHours();
+  if (h < 6) return "Bonne nuit";
+  if (h < 12) return "Bonjour";
+  if (h < 18) return "Bon après-midi";
+  return "Bonsoir";
+}
+
+// Carte de pochette pour le carrousel de l'accueil (icône ICON_PLAY définie
+// plus bas dans le fichier — disponible au moment où renderAll s'exécute).
+function renderHomeCard(track) {
+  const card = document.createElement("div");
+  card.className = "home-card";
+  card.innerHTML = `
+    <div class="home-card-art">
+      ${coverHtml(track, track.id, "home-card-cover", true)}
+      <button class="home-card-play" title="Lire" aria-label="Lire">${ICON_PLAY}</button>
+    </div>
+    <div class="home-card-title">${track.title}</div>
+    <div class="home-card-sub">${track.artist || ""}</div>
+  `;
+  card.addEventListener("click", () => handleTrackActivate(track));
+  return card;
+}
+
+// Tuiles d'accès rapide = premières playlists.
+function renderHomeQuick() {
+  const wrap = $("#homeQuick");
+  if (!wrap) return;
+  const pls = state.playlists.slice(0, 6);
+  wrap.innerHTML = "";
+  pls.forEach((pl) => {
+    const tile = document.createElement("div");
+    tile.className = "home-qtile";
+    tile.innerHTML = `
+      ${playlistCoverHtml(pl, "home-qtile-cover")}
+      <div class="home-qtile-name">${pl.name}</div>
+      <button class="home-qtile-play" title="Ouvrir" aria-label="Ouvrir">${ICON_PLAY}</button>
+    `;
+    tile.addEventListener("click", () => { activateView("library"); openPlaylistDetail(pl.id, pl.name); });
+    wrap.appendChild(tile);
+  });
+}
+
 function renderAll() {
-  renderGrid(
-    $("#homeGrid"),
-    [...state.library].slice(-8).reverse(),
-    "Rien dans ta bibliothèque pour l'instant — ajoute un morceau à une playlist pour le télécharger sur le NAS."
-  );
+  const g = $("#homeGreeting");
+  if (g) g.innerHTML = `${greetingText()}, Nicolas <span class="dim">— voici ta bibliothèque</span>`;
+  renderHomeQuick();
+
+  const grid = $("#homeGrid");
+  const recent = [...state.library].slice(-12).reverse();
+  grid.innerHTML = "";
+  if (!recent.length) {
+    grid.style.display = "block";
+    grid.innerHTML = `<div class="empty-state">Rien dans ta bibliothèque pour l'instant — cherche un morceau et ajoute-le à une playlist pour le télécharger.</div>`;
+  } else {
+    grid.style.display = "";
+    recent.forEach((t) => grid.appendChild(renderHomeCard(t)));
+  }
   updateStorageMeter();
 }
 
@@ -347,6 +412,27 @@ function renderPlaylistsList() {
   state.playlists.forEach((pl) => container.appendChild(renderPlaylistRow(pl)));
 }
 
+// Playlists dans la sidebar : vignette + nom, clic = ouvre le détail.
+function renderSidebarPlaylists() {
+  const container = $("#sidebarPlaylists");
+  if (!container) return;
+  container.innerHTML = "";
+  if (!state.playlists.length) {
+    container.innerHTML = `<div class="side-pls-empty">Aucune playlist</div>`;
+    return;
+  }
+  state.playlists.forEach((pl) => {
+    const row = document.createElement("div");
+    row.className = "side-pl";
+    row.innerHTML = `
+      ${playlistCoverHtml(pl, "side-pl-cover")}
+      <div class="side-pl-name">${pl.name}</div>
+    `;
+    row.addEventListener("click", () => { activateView("library"); openPlaylistDetail(pl.id, pl.name); });
+    container.appendChild(row);
+  });
+}
+
 async function loadPlaylists() {
   try {
     const res = await apiFetch("/api/playlists");
@@ -357,6 +443,8 @@ async function loadPlaylists() {
     state.playlists = [];
   }
   renderPlaylistsList();
+  renderSidebarPlaylists();
+  renderHomeQuick();
 }
 
 function renderPlaylistTrackRow(track, queueRaw, playlistId, editable) {
@@ -598,6 +686,8 @@ function refreshPlaylistCovers(playlistId, name) {
   $("#playlistDetailCover").innerHTML =
     playlistCoverHtml({ id: playlistId, name }, "playlist-hero-cover");
   renderPlaylistsList();
+  renderSidebarPlaylists();
+  renderHomeQuick();
 }
 
 $("#playlistCoverInput").addEventListener("change", async (e) => {
@@ -1474,6 +1564,8 @@ const dropzone = $("#dropzone");
 const fileInput = $("#fileInput");
 const importPlaylistSelect = $("#importPlaylistSelect");
 const importNewPlaylistName = $("#importNewPlaylistName");
+const importProgressEl = $("#importProgress");
+const importLockedNote = $("#importLockedNote");
 
 // Doit rester aligné sur AUDIO_EXTENSIONS dans upload_server.py.
 const AUDIO_EXTENSIONS = [
@@ -1508,7 +1600,9 @@ function currentImportPlaylistChoice() {
 }
 
 function syncImportDropzoneState() {
-  dropzone.classList.toggle("is-disabled", !currentImportPlaylistChoice());
+  const ready = !!currentImportPlaylistChoice();
+  dropzone.classList.toggle("is-disabled", !ready);
+  importLockedNote?.classList.toggle("is-hidden", ready);
 }
 
 async function populateImportPlaylistSelect() {
@@ -1702,7 +1796,7 @@ async function uploadFiles(rawFiles) {
   // Les archives sont ouvertes ici : un .zip de 105 Mo ne franchirait jamais
   // le tunnel d'un bloc, alors que les pistes qu'il contient passent en lots.
   const { files, failed: zipFailed } = await expandZips(rawFiles, (msg) =>
-    renderImportProgress(resultEl, msg, 0, 1)
+    renderImportProgress(importProgressEl, msg, 0, 1)
   );
 
   const tooBig = files.filter((f) => f.size > SINGLE_FILE_MAX_BYTES);
@@ -1711,6 +1805,7 @@ async function uploadFiles(rawFiles) {
   const refused = sized.filter((f) => !ACCEPTED_EXTENSIONS.includes(fileExtension(f.name)));
 
   if (!accepted.length) {
+    clearImportProgress();
     resultEl.innerHTML = "";
     toast(tooBig.length
       ? `Fichier trop volumineux (${formatSize(tooBig[0].size)}). Passe par File Station.`
@@ -1721,6 +1816,7 @@ async function uploadFiles(rawFiles) {
   }
 
   const batches = splitIntoBatches(accepted);
+  renderImportQueue(accepted);
   const allTracks = [];
   const allRejected = [
     ...zipFailed,
@@ -1740,7 +1836,7 @@ async function uploadFiles(rawFiles) {
     const prefix = batches.length > 1 ? `Lot ${b + 1}/${batches.length} — ` : "";
 
     try {
-      renderImportProgress(resultEl, prefix + `Envoi de ${batch.length} fichier(s)…`, 0, batch.length);
+      renderImportProgress(importProgressEl, prefix + `Envoi de ${batch.length} fichier(s)…`, 0, batch.length);
 
       const formData = new FormData();
       batch.forEach((f) => formData.append("file", f));
@@ -1757,7 +1853,7 @@ async function uploadFiles(rawFiles) {
 
       // Le NAS convertit en tâche de fond : on suit l'avancement plutôt que
       // de laisser la requête ouverte (Cloudflare la couperait à 100 s).
-      const job = await pollImportJob(start.job_id, prefix, resultEl);
+      const job = await pollImportJob(start.job_id, prefix, importProgressEl);
       allTracks.push(...(job.tracks || []));
       allRejected.push(...(job.rejected || []));
       if (job.playlist) {
@@ -1773,6 +1869,7 @@ async function uploadFiles(rawFiles) {
   }
 
   const playlist = playlistInfo || { id: "", name: choice.playlist_name || "la playlist" };
+  clearImportProgress();
   if (allTracks.length) {
     toast(`${allTracks.length > 1 ? `${allTracks.length} morceaux importés` : "1 morceau importé"} dans "${playlist.name}"`);
   } else {
@@ -1789,15 +1886,43 @@ async function uploadFiles(rawFiles) {
   }
 }
 
+// Carte de progression. `done === 0` (ou total inconnu) => barre indéterminée
+// (envoi en cours, pas d'octets exposés par fetch) ; sinon barre déterminée.
 function renderImportProgress(el, label, done, total) {
-  const pct = total ? Math.round((done / total) * 100) : 0;
+  const determinate = total > 0 && done > 0;
+  const pct = determinate ? Math.round((done / total) * 100) : 0;
+  const count = total > 1 ? `${done} / ${total}` : "";
   el.innerHTML = `
-    <div class="empty-state">
-      <div>${label}</div>
-      <div style="margin-top:10px;height:4px;background:#2c2c33;border-radius:2px;overflow:hidden">
-        <div style="height:100%;width:${pct}%;background:#ffa8de;transition:width .3s ease"></div>
+    <div class="import-progress-card">
+      <div class="import-progress-head">
+        <span class="import-spinner"></span>
+        <span class="import-progress-label">${label}</span>
+        ${count ? `<span class="import-progress-count">${count}</span>` : ""}
+      </div>
+      <div class="import-progress-bar ${determinate ? "" : "indeterminate"}">
+        <div class="import-progress-fill" style="width:${pct}%"></div>
       </div>
     </div>`;
+}
+
+function clearImportProgress() {
+  if (importProgressEl) importProgressEl.innerHTML = "";
+}
+
+// File d'attente affichée pendant le traitement : la liste des fichiers acceptés,
+// en attente de confirmation du NAS. Le résultat définitif (rendu ensuite par
+// renderImportResult) fait autorité.
+function renderImportQueue(files) {
+  const el = $("#importResult");
+  el.innerHTML = `<div class="import-list">` + files.map((f) => `
+    <div class="import-row pending">
+      <div class="import-row-cover" style="background:${coverGradient(f.name)}">${initials(f.name.replace(/\.[^.]+$/, ""))}</div>
+      <div class="import-row-main">
+        <div class="import-row-title">${f.name}</div>
+        <div class="import-row-sub">${formatSize(f.size)}</div>
+      </div>
+      <span class="import-chip wait">En file</span>
+    </div>`).join("") + `</div>`;
 }
 
 // Interroge /api/import/<id> jusqu'à la fin. Intervalle volontairement lâche :
@@ -1834,45 +1959,56 @@ async function pollImportJob(jobId, prefix, resultEl) {
 
 function renderImportResult(data) {
   const resultEl = $("#importResult");
+  const okN = data.tracks.length;
+  const skipN = (data.rejected || []).length;
+
+  const summary = document.createElement("div");
+  summary.className = "import-summary";
+  summary.innerHTML =
+    `<span>${okN ? (okN > 1 ? `${okN} morceaux importés` : "1 morceau importé") : "Aucun import"}</span>`
+    + (okN ? `<span class="import-summary-chip ok">${okN} ✓</span>` : "")
+    + (skipN ? `<span class="import-summary-chip skip">${skipN} ignoré${skipN > 1 ? "s" : ""}</span>` : "");
+
+  const list = document.createElement("div");
+  list.className = "import-list";
+  data.tracks.forEach((entry) => list.appendChild(renderImportedTrackRow(entry, data.playlist.name)));
+  (data.rejected || []).forEach((entry) => list.appendChild(renderRejectedRow(entry)));
+
   resultEl.innerHTML = "";
-  data.tracks.forEach((entry) => resultEl.appendChild(renderImportedTrackRow(entry, data.playlist.name)));
-  (data.rejected || []).forEach((entry) => resultEl.appendChild(renderRejectedRow(entry)));
+  resultEl.appendChild(summary);
+  resultEl.appendChild(list);
 }
 
 function renderRejectedRow(entry) {
-  // Styles en ligne : style.css n'a pas de classe pour cet état, autant ne pas
-  // dépendre d'une feuille à modifier en parallèle.
   const row = document.createElement("div");
-  row.className = "track-row";
-  row.style.opacity = "0.55";
+  row.className = "import-row error";
   row.innerHTML = `
-    <div class="track-row-cover" style="background:#3a3a42;color:#8a8a93">✕</div>
-    <div>
-      <div class="track-row-title">${entry.filename}</div>
-      <div class="track-row-artist">Non importé — ${entry.reason}</div>
+    <div class="import-row-cover err">✕</div>
+    <div class="import-row-main">
+      <div class="import-row-title">${entry.filename}</div>
+      <div class="import-row-sub">Non importé — ${entry.reason}</div>
     </div>
-    <span></span><span></span><span></span>
+    <span class="import-chip skip">Ignoré</span>
   `;
   return row;
 }
 
 function renderImportedTrackRow(entry, playlistName) {
   const row = document.createElement("div");
-  row.className = "track-row";
+  row.className = "import-row";
   const status = entry.navidrome_id
     ? (entry.added_to_playlist ? `Ajouté à « ${playlistName} »` : "Ajouté à ta bibliothèque")
     : "Indexation en cours…";
   // L'artiste vient des tags lus par le NAS ; absent sur un fichier mal taggé.
   const subtitle = entry.artist ? `${entry.artist} · ${status}` : status;
   row.innerHTML = `
-    <div class="track-row-cover" style="background:${coverGradient(entry.filename)}">${initials(entry.title)}</div>
-    <div>
-      <div class="track-row-title">${entry.title}</div>
-      <div class="track-row-artist">${subtitle}</div>
+    <div class="import-row-cover" style="background:${coverGradient(entry.filename)}">${initials(entry.title)}</div>
+    <div class="import-row-main">
+      <div class="import-row-title">${entry.title}</div>
+      <div class="import-row-sub">${subtitle}</div>
     </div>
-    <span></span>
     <button class="playlist-add-btn" data-add title="Ajouter à une playlist">＋</button>
-    <span></span>
+    <span class="import-chip ok">Importé</span>
   `;
   row.querySelector("[data-add]").addEventListener("click", (e) => {
     e.stopPropagation();
@@ -1924,6 +2060,7 @@ function playTrack(track, queue) {
   $("#playerCover").style.background = coverGradient(key);
   $("#playerCachePill").textContent = cachePillLabel;
   $("#playerCachePill").className = "cache-pill cached";
+  updatePlayerLike();
 }
 
 function togglePlayPause() {
@@ -1932,13 +2069,20 @@ function togglePlayPause() {
   else audioEl.pause();
 }
 
+const ICON_PLAY = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+const ICON_PAUSE = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>';
+
 audioEl.addEventListener("play", () => {
   state.isPlaying = true;
-  $("#playBtn").textContent = "⏸";
+  $("#playBtn").innerHTML = ICON_PAUSE;
+  $("#playBtn").title = "Pause";
+  document.querySelector(".player")?.classList.add("is-playing");
 });
 audioEl.addEventListener("pause", () => {
   state.isPlaying = false;
-  $("#playBtn").textContent = "▶";
+  $("#playBtn").innerHTML = ICON_PLAY;
+  $("#playBtn").title = "Lecture";
+  document.querySelector(".player")?.classList.remove("is-playing");
 });
 audioEl.addEventListener("loadedmetadata", () => {
   $("#timeTotal").textContent = formatTime(audioEl.duration);
@@ -2074,11 +2218,27 @@ $("#userBtn")?.addEventListener("click", (e) => {
   ]);
 });
 
+// Cœur de la barre de lecture. On passe un bouton jetable à toggleFavorite :
+// il y écrit son état de chargement (texte « … ») sans toucher au SVG réel,
+// puis syncFavButtons -> updatePlayerLike remet le vrai cœur à jour.
+$("#playerLike")?.addEventListener("click", () => {
+  if (!state.currentTrackObj) return;
+  toggleFavorite(state.currentTrackObj, document.createElement("button"));
+});
+
+// Raccourci « Importer » de la barre du haut.
+$("#topbarImportBtn")?.addEventListener("click", () => activateView("import"));
+
+// Bouton « + » de la section playlists de la sidebar : même action que le
+// bouton de la vue Playlists.
+$("#sidebarCreateBtn")?.addEventListener("click", () => $("#createPlaylistBtn")?.click());
+
 function unlockApp() {
   $("#accessGate").classList.add("is-hidden");
   document.body.classList.remove("is-locked");
   loadFavorites();   // cœurs pleins dès le premier rendu
   loadLibrary();
+  loadPlaylists();   // remplit la sidebar + les tuiles d'accueil dès le départ
 }
 
 async function attemptAccess() {
