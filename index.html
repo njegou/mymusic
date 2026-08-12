@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>mymusic</title>
-<link rel="stylesheet" href="style.css?v=24">
+<link rel="stylesheet" href="style.css?v=25">
 
 <!-- Page d'accès — styles autonomes (n'écrase rien de style.css) -->
 <style>
@@ -256,24 +256,36 @@
     <!-- SIDEBAR -->
     <aside class="sidebar">
       <div class="brand">
-        <span class="brand-mark"></span>
+        <span class="brand-mark">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+        </span>
         <span class="brand-name">mymusic</span>
       </div>
 
       <nav class="nav">
         <button class="nav-item is-active" data-view="home">
-          <span class="nav-icon">⌂</span> Accueil
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg></span> Accueil
         </button>
         <button class="nav-item" data-view="search">
-          <span class="nav-icon">⌕</span> Rechercher
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></span> Rechercher
         </button>
         <button class="nav-item" data-view="library">
-          <span class="nav-icon">◍</span> Playlists
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M3 12h18M3 18h12"/></svg></span> Playlists
         </button>
         <button class="nav-item" data-view="import">
-          <span class="nav-icon">⇪</span> Importer
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0-4 4m4-4 4 4"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></span> Importer
         </button>
       </nav>
+
+      <div class="side-section">
+        <div class="side-section-head">
+          <span>Tes playlists</span>
+          <button class="side-add-btn" id="sidebarCreateBtn" title="Nouvelle playlist" aria-label="Nouvelle playlist">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+        <div class="side-pls" id="sidebarPlaylists"></div>
+      </div>
 
       <div class="storage-meter">
         <div class="storage-meter-head">
@@ -293,6 +305,11 @@
           <span class="search-icon">⌕</span>
           <input id="searchInput" type="text" placeholder="Chercher un morceau, un artiste…" autocomplete="off">
         </div>
+        <div class="topbar-spacer"></div>
+        <button class="topbar-btn" id="topbarImportBtn" title="Importer des fichiers">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0-4 4m4-4 4 4"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+          Importer
+        </button>
         <button class="user-btn" id="userBtn" title="Compte" aria-label="Compte">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="8" r="4"/>
@@ -302,9 +319,12 @@
       </header>
 
       <section class="view" id="view-home">
-        <h1 class="view-title">Bibliothèque récente</h1>
-        <p class="view-sub">Le catalogue mondial est consultable en entier via la recherche. Seuls les morceaux téléchargés apparaissent ici.</p>
-        <div class="track-list" id="homeGrid"></div>
+        <h1 class="home-greeting" id="homeGreeting">Bonjour <span class="dim">— voici ta bibliothèque</span></h1>
+        <div class="home-quick" id="homeQuick"></div>
+        <div class="home-sec">
+          <div class="home-sec-head"><h2>Récemment ajoutés</h2></div>
+          <div class="home-rail" id="homeGrid"></div>
+        </div>
       </section>
 
       <section class="view is-hidden" id="view-search">
@@ -373,13 +393,19 @@
                  placeholder="Nom de la nouvelle playlist" maxlength="100">
         </div>
 
+        <p class="import-locked-note" id="importLockedNote">Choisis une playlist de destination pour activer l'import.</p>
+
         <label class="dropzone is-disabled" id="dropzone" for="fileInput">
-          <span class="dropzone-icon">⇪</span>
-          <span class="dropzone-text">Glisse tes fichiers audio ou un .zip ici, ou clique pour parcourir</span>
+          <span class="dropzone-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0-4 4m4-4 4 4"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+          </span>
+          <span class="dropzone-text">Glisse tes fichiers ici, ou <b>clique pour parcourir</b></span>
+          <span class="dropzone-hint">mp3 · m4a · flac · wav · opus · ogg… ou une archive .zip</span>
           <input type="file" id="fileInput" multiple
                  accept=".mp3,.m4a,.m4b,.aac,.flac,.wav,.wave,.aif,.aiff,.aifc,.ogg,.oga,.opus,.wma,.ape,.wv,.mpc,.zip,audio/*,application/zip" hidden>
         </label>
 
+        <div id="importProgress"></div>
         <div id="importResult"></div>
       </section>
 
@@ -394,15 +420,28 @@
         <div class="player-title" id="playerTitle">Rien en lecture</div>
         <div class="player-artist" id="playerArtist">—</div>
       </div>
-      <span class="cache-pill" id="playerCachePill">—</span>
+      <button class="player-like" id="playerLike" title="Favori" aria-label="Ajouter aux favoris">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7.5-4.6-10-9.2C.4 8.5 2 5 5.4 5c2 0 3.3 1.2 4.6 2.6C11.3 6.2 12.6 5 14.6 5 18 5 19.6 8.5 22 11.8 19.5 16.4 12 21 12 21z"/></svg>
+      </button>
+      <div class="player-eq" id="playerEq" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+      <span class="cache-pill is-hidden" id="playerCachePill">—</span>
     </div>
 
     <div class="player-controls">
       <div class="transport">
-        <button class="ctl-btn" id="shuffleBtn" title="Lecture aléatoire">🔀</button>
-        <button class="ctl-btn" id="prevBtn" title="Précédent">⏮</button>
-        <button class="ctl-btn ctl-btn-main" id="playBtn" title="Lecture">▶</button>
-        <button class="ctl-btn" id="nextBtn" title="Suivant">⏭<span class="queue-badge is-hidden" id="queueBadge">0</span></button>
+        <button class="ctl-btn" id="shuffleBtn" title="Lecture aléatoire" aria-label="Lecture aléatoire">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5"/><path d="M4 20 21 3"/><path d="M21 16v5h-5"/><path d="m15 15 6 6"/><path d="M4 4l5 5"/></svg>
+        </button>
+        <button class="ctl-btn" id="prevBtn" title="Précédent" aria-label="Précédent">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h2v14H6zM20 5 9 12l11 7z"/></svg>
+        </button>
+        <button class="ctl-btn ctl-btn-main" id="playBtn" title="Lecture" aria-label="Lecture">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+        <button class="ctl-btn" id="nextBtn" title="Suivant" aria-label="Suivant">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 5h2v14h-2zM4 5l11 7L4 19z"/></svg>
+          <span class="queue-badge is-hidden" id="queueBadge">0</span>
+        </button>
       </div>
       <div class="progress-row">
         <span class="time" id="timeCurrent">0:00</span>
@@ -422,16 +461,16 @@
   <!-- MOBILE TAB BAR -->
   <nav class="mobile-tabbar">
     <button class="nav-item is-active" data-view="home">
-      <span class="nav-icon">⌂</span><span class="tab-label">Accueil</span>
+      <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg></span><span class="tab-label">Accueil</span>
     </button>
     <button class="nav-item" data-view="search">
-      <span class="nav-icon">⌕</span><span class="tab-label">Chercher</span>
+      <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></span><span class="tab-label">Chercher</span>
     </button>
     <button class="nav-item" data-view="library">
-      <span class="nav-icon">◍</span><span class="tab-label">Playlists</span>
+      <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M3 12h18M3 18h12"/></svg></span><span class="tab-label">Playlists</span>
     </button>
     <button class="nav-item" data-view="import">
-      <span class="nav-icon">⇪</span><span class="tab-label">Importer</span>
+      <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0-4 4m4-4 4 4"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></span><span class="tab-label">Importer</span>
     </button>
   </nav>
 
@@ -453,6 +492,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=24"></script>
+  <script src="app.js?v=25"></script>
 </body>
 </html>
