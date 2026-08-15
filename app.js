@@ -2020,6 +2020,53 @@ function renderImportedTrackRow(entry, playlistName) {
 // ---------------------------------------------------------------------------
 // Lecteur — préfère le flux Navidrome (navidrome_id), sinon repli local
 // ---------------------------------------------------------------------------
+// --- Robustesse lecture ------------------------------------------------------
+// Ignore l'AbortError (interruption bénigne quand on change vite de morceau)
+// et réessaie UNE fois, en douceur, un chargement qui échoue de façon
+// transitoire (NAS mono-thread occupé, hoquet du tunnel Cloudflare, etc.).
+let playGen = 0;         // incrémenté à chaque nouveau morceau lancé
+let loadCycle = 0;       // incrémenté à chaque tentative de chargement (1re + retry)
+let cycleFailed = false; // évite de compter 2× le même échec (rejet play() + event "error")
+let hasRetried = false;  // un seul retry auto par morceau
+let attemptUrl = null;   // URL du morceau courant, pour le retry
+
+function startPlay(url) {
+  playGen++;
+  attemptUrl = url;
+  hasRetried = false;
+  loadAndPlay(url);
+}
+
+function loadAndPlay(url) {
+  const gen = playGen;
+  const cycle = ++loadCycle;
+  cycleFailed = false;
+  audioEl.pause();       // coupe un éventuel chargement en cours → moins de races
+  audioEl.src = url;
+  audioEl.play().catch((err) => {
+    // Remplacé par un morceau plus récent : bénin, on ignore.
+    if (err && err.name === "AbortError") return;
+    registerPlayFailure(gen, cycle);
+  });
+}
+
+function registerPlayFailure(gen, cycle) {
+  if (gen !== playGen) return;     // un autre morceau a été lancé depuis
+  if (cycle !== loadCycle) return; // signal issu d'un ancien cycle de chargement
+  if (cycleFailed) return;         // rejet play() + event "error" arrivent ensemble → 1 seule fois
+  cycleFailed = true;
+  if (!hasRetried) {
+    hasRetried = true;
+    setTimeout(() => {
+      if (gen !== playGen) return; // annulé si l'utilisateur a changé de morceau entre-temps
+      const sep = attemptUrl.includes("?") ? "&" : "?";
+      loadAndPlay(attemptUrl + sep + "r=" + Date.now()); // cache-buster → requête neuve
+    }, 700);
+  } else {
+    toast("Lecture impossible. Réessaie dans un instant.");
+  }
+}
+
 function playTrack(track, queue) {
   const key = track.navidrome_id || track.id;
   if (state.currentTrackId === key) {
@@ -2051,8 +2098,7 @@ function playTrack(track, queue) {
     cachePillLabel = "Streaming";
   }
 
-  audioEl.src = trackStreamUrl;
-  audioEl.play().catch((err) => toast(`Lecture impossible : ${err.message}`));
+  startPlay(trackStreamUrl);
 
   $("#playerTitle").textContent = track.title;
   $("#playerArtist").textContent = track.artist;
@@ -2065,7 +2111,7 @@ function playTrack(track, queue) {
 
 function togglePlayPause() {
   if (!state.currentTrackId) return;
-  if (audioEl.paused) audioEl.play();
+  if (audioEl.paused) audioEl.play().catch(() => {});
   else audioEl.pause();
 }
 
@@ -2094,7 +2140,7 @@ audioEl.addEventListener("timeupdate", () => {
 });
 audioEl.addEventListener("ended", playNextTrack);
 audioEl.addEventListener("error", () => {
-  if (state.currentTrackId) toast("Erreur de streaming.");
+  if (state.currentTrackId) registerPlayFailure(playGen, loadCycle);
 });
 
 function playNextTrack() {
