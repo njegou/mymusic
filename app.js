@@ -1442,6 +1442,51 @@ function renderArtistSongRow(track, tracks) {
   return row;
 }
 
+// Rapproche un tag artiste (fichier déjà téléchargé) du nom d'un artiste du
+// catalogue. Égalité normalisée, ou bien l'artiste figure comme collaborateur
+// dans un tag « A, B » / « A feat. B » / « A & B » / « A / B ».
+function artistTagMatches(entryArtist, targetName) {
+  const target = normalize(targetName).trim();
+  if (!target) return false;
+  const a = normalize(entryArtist).trim();
+  if (!a) return false;
+  if (a === target) return true;
+  return a
+    .split(/\s*(?:,|&|\/|;|\bfeat\.?(?=\s|$)|\bfeaturing(?=\s|$)|\bft\.?(?=\s|$))\s*/)
+    .some((tok) => tok.trim() === target);
+}
+
+// Ligne d'un morceau DÉJÀ dans la bibliothèque, affichée sur la page artiste.
+// Lecture via Navidrome (navidrome_id), favori et ajout à une playlist comme
+// partout ailleurs. File d'attente = tes autres morceaux de cet artiste.
+function renderArtistLibraryRow(track, queue) {
+  const row = document.createElement("div");
+  row.className = "track-row";
+  row.innerHTML = `
+    ${coverHtml(track, track.id)}
+    <div>
+      <div class="track-row-title">${track.title}</div>
+      <div class="track-row-artist">${track.artist || ""}</div>
+    </div>
+    <span class="track-row-status cached">Bibliothèque</span>
+    <span class="row-actions">
+      ${favBtnHtml(track)}
+      <button class="row-action" title="Ajouter à une playlist">＋</button>
+    </span>
+    <span class="track-row-duration">${formatTime(track.duration)}</span>
+  `;
+  wireFav(row, track);
+  row.addEventListener("click", (e) => {
+    if (e.target.closest(".row-action") || e.target.closest("[data-fav]")) return;
+    playTrack(track, queue);
+  });
+  row.querySelector(".row-action").addEventListener("click", (e) => {
+    e.stopPropagation();
+    openPlaylistPickerDirect(e.currentTarget, track.navidrome_id);
+  });
+  return row;
+}
+
 async function openArtist(browseId) {
   activateView("artist");
   const head = $("#artistHead");
@@ -1471,6 +1516,20 @@ async function openArtist(browseId) {
 
     body.innerHTML = "";
 
+    // Section « Dans ta bibliothèque » : tous tes morceaux déjà téléchargés de
+    // cet artiste, pas seulement ceux qui recoupent les Populaires du catalogue.
+    const owned = state.library.filter((t) => artistTagMatches(t.artist, artist.name));
+    if (owned.length) {
+      const h = document.createElement("h2");
+      h.className = "artist-section-title";
+      h.textContent = `Dans ta bibliothèque · ${owned.length}`;
+      body.appendChild(h);
+      const list = document.createElement("div");
+      list.className = "track-list";
+      owned.forEach((t) => list.appendChild(renderArtistLibraryRow(t, owned)));
+      body.appendChild(list);
+    }
+
     // Section populaires
     const songs = artist.songs || [];
     if (songs.length) {
@@ -1499,7 +1558,7 @@ async function openArtist(browseId) {
     addReleases("Albums", artist.albums);
     addReleases("Singles & EP", artist.singles);
 
-    if (!songs.length && !(artist.albums || []).length && !(artist.singles || []).length) {
+    if (!owned.length && !songs.length && !(artist.albums || []).length && !(artist.singles || []).length) {
       body.innerHTML = `<div class="empty-state">Aucun contenu disponible pour cet artiste.</div>`;
     }
   } catch (err) {
