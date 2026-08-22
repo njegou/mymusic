@@ -317,14 +317,6 @@ function renderGrid(container, tracks, emptyMsg) {
   tracks.forEach((t) => container.appendChild(renderCard(t)));
 }
 
-function greetingText() {
-  const h = new Date().getHours();
-  if (h < 6) return "Bonne nuit";
-  if (h < 12) return "Bonjour";
-  if (h < 18) return "Bon après-midi";
-  return "Bonsoir";
-}
-
 // Carte de pochette pour le carrousel de l'accueil (icône ICON_PLAY définie
 // plus bas dans le fichier — disponible au moment où renderAll s'exécute).
 function renderHomeCard(track) {
@@ -362,8 +354,6 @@ function renderHomeQuick() {
 }
 
 function renderAll() {
-  const g = $("#homeGreeting");
-  if (g) g.innerHTML = `${greetingText()}, Nicolas <span class="dim">— voici ta bibliothèque</span>`;
   renderHomeQuick();
 
   const grid = $("#homeGrid");
