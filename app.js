@@ -2302,9 +2302,11 @@ function showAccessGate() {
   $("#accessLogo")?.classList.remove("playing");
   const btn = $("#accessBtn");
   if (btn) { btn.disabled = false; btn.textContent = "Accéder"; }
+  const userInput = $("#accessUsername");
   const input = $("#accessPassword");
+  if (userInput) userInput.value = "";
   if (input) input.value = "";
-  setTimeout(() => input?.focus(), 50);
+  setTimeout(() => (userInput || input)?.focus(), 50);
 }
 
 // Déconnexion : oublie le mot de passe sur cet appareil et reverrouille.
@@ -2347,18 +2349,33 @@ function unlockApp() {
 }
 
 async function attemptAccess() {
+  const userInput = $("#accessUsername");
   const input = $("#accessPassword");
   const btn = $("#accessBtn");
   const err = $("#accessError");
-  const candidate = input.value.trim();
-  if (!candidate) return;
+  const username = (userInput?.value || "").trim();
+  const password = input.value.trim();
+  if (!username || !password) return;
 
   btn.disabled = true;
   btn.textContent = "Vérification…";
   err.textContent = "";
 
-  if (await validateKey(candidate)) {
-    localStorage.setItem("mymusic_api_key", candidate);
+  // On échange (identifiant + mot de passe Navidrome) contre un token de
+  // session. Le token remplace l'ancien mot de passe partagé dans localStorage :
+  // tout le reste de l'appli (apiFetch, streamUrlWithKey) est inchangé.
+  let token = "";
+  try {
+    const res = await fetch(apiUrl("/api/login"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    if (res.ok) token = (await res.json()).token || "";
+  } catch {}
+
+  if (token) {
+    localStorage.setItem("mymusic_api_key", token);
     // Animation égaliseur du logo, puis on déverrouille.
     const logo = $("#accessLogo");
     if (logo) {
@@ -2368,7 +2385,7 @@ async function attemptAccess() {
     }
     unlockApp();
   } else {
-    err.textContent = "Mot de passe incorrect.";
+    err.textContent = "Identifiants incorrects.";
     input.value = "";
     input.focus();
     btn.disabled = false;
@@ -2377,6 +2394,9 @@ async function attemptAccess() {
 }
 
 $("#accessBtn").addEventListener("click", attemptAccess);
+$("#accessUsername")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") $("#accessPassword")?.focus();
+});
 $("#accessPassword").addEventListener("keydown", (e) => {
   if (e.key === "Enter") attemptAccess();
 });
