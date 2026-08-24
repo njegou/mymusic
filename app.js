@@ -353,8 +353,76 @@ function renderHomeQuick() {
   });
 }
 
+// ── Recommandations de l'accueil ────────────────────────────────────────────
+// Servies par /api/home, personnalisées par utilisateur (le backend interroge
+// Navidrome sous l'identité de la session) et renouvelées toutes les 6 h.
+// Le conteneur est créé à la volée au-dessus de "Récemment ajoutés", donc
+// aucune modification d'index.html n'est nécessaire.
+function homeRecoContainer() {
+  let box = $("#homeRecos");
+  if (box) return box;
+
+  const grid = $("#homeGrid");
+  if (!grid) return null;
+
+  box = document.createElement("div");
+  box.id = "homeRecos";
+
+  // On remonte jusqu'au titre "Récemment ajoutés" pour se placer avant lui.
+  const anchor = grid.previousElementSibling || grid;
+  grid.parentElement.insertBefore(box, anchor);
+  return box;
+}
+
+function renderRecoShelf(shelf) {
+  const section = document.createElement("div");
+  section.className = "home-reco-shelf";
+
+  const heading = document.createElement("h2");
+  heading.textContent = shelf.title;
+  section.appendChild(heading);
+
+  const row = document.createElement("div");
+  // Réutilise la classe du carrousel existant : même style, aucun CSS à ajouter.
+  row.className = $("#homeGrid") ? $("#homeGrid").className : "";
+  shelf.tracks.forEach((t) => {
+    const track = {
+      ...t,
+      navidrome_id: t.navidrome_id || t.id,
+      cover: t.coverArt ? coverUrlWithKey(t.coverArt) : null,
+    };
+    row.appendChild(renderHomeCard(track));
+  });
+  section.appendChild(row);
+  return section;
+}
+
+async function renderRecommendations(force = false) {
+  const box = homeRecoContainer();
+  if (!box) return;
+
+  try {
+    const res = await apiFetch("/api/home", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force: !!force }),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const shelves = (data && data.shelves) || [];
+
+    box.innerHTML = "";
+    // Une rangée vide n'est pas affichée : mieux vaut rien qu'un bloc creux.
+    shelves.filter((sh) => sh.tracks && sh.tracks.length)
+           .forEach((sh) => box.appendChild(renderRecoShelf(sh)));
+  } catch {
+    // Silencieux : l'accueil doit rester utilisable sans recommandations.
+  }
+}
+
 function renderAll() {
   renderHomeQuick();
+  renderRecommendations();
 
   const grid = $("#homeGrid");
   const recent = [...state.library].slice(-12).reverse();
