@@ -2182,10 +2182,48 @@ audioEl.addEventListener("pause", () => {
 audioEl.addEventListener("loadedmetadata", () => {
   $("#timeTotal").textContent = formatTime(audioEl.duration);
 });
+
+// ── Scrobble ────────────────────────────────────────────────────────────────
+// Navidrome n'enregistre une écoute que si un client la lui signale
+// explicitement. Sans cet appel, la base reste vide et aucune recommandation
+// personnalisée n'est possible.
+//
+// Le seuil suit la convention Last.fm : 30 s de lecture, ou la moitié du
+// morceau si celui-ci dure moins d'une minute. playGen sert de clé
+// anti-doublon — il est incrémenté à chaque nouveau morceau lancé — donc un
+// retour en arrière dans la piste ne renvoie rien, alors qu'une relecture
+// complète compte bien comme une seconde écoute.
+let scrobbledGen = -1;
+
+async function sendScrobble(track) {
+  // Seuls les morceaux connus de Navidrome sont scrobblables : un ID YouTube
+  // joué en streaming direct n'a aucun équivalent en base, l'API renverrait
+  // une erreur à chaque piste.
+  if (!track || !track.navidrome_id) return;
+  try {
+    await apiFetch("/api/scrobble", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: track.navidrome_id }),
+    });
+  } catch {
+    // Échec silencieux et volontaire : une écoute perdue ne doit jamais
+    // perturber la lecture en cours.
+  }
+}
 audioEl.addEventListener("timeupdate", () => {
   const pct = audioEl.duration ? (audioEl.currentTime / audioEl.duration) * 100 : 0;
   $("#progressFill").style.width = `${pct}%`;
   $("#timeCurrent").textContent = formatTime(audioEl.currentTime);
+
+  // Seuil d'écoute atteint -> on notifie Navidrome (cf. sendScrobble).
+  if (scrobbledGen !== playGen && audioEl.duration) {
+    const threshold = Math.min(30, audioEl.duration / 2);
+    if (audioEl.currentTime >= threshold) {
+      scrobbledGen = playGen;
+      sendScrobble(state.currentTrackObj);
+    }
+  }
 });
 audioEl.addEventListener("ended", playNextTrack);
 audioEl.addEventListener("error", () => {
