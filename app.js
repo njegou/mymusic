@@ -98,7 +98,6 @@ const state = {
 };
 
 const PAGE_SIZE = 20; // doit correspondre au page_size côté backend
-const AVG_MP3_MB = 4.2;
 const audioEl = $("#audioEl");
 
 const byLibId = (id) => state.library.find((t) => t.id === id);
@@ -434,14 +433,6 @@ function renderAll() {
     grid.style.display = "";
     recent.forEach((t) => grid.appendChild(renderHomeCard(t)));
   }
-  updateStorageMeter();
-}
-
-function updateStorageMeter() {
-  const mb = state.library.length * AVG_MP3_MB;
-  $("#storageLabel").textContent = mb >= 1000 ? `${(mb / 1000).toFixed(2)} Go` : `${mb.toFixed(0)} Mo`;
-  const pct = Math.min(100, (mb / 2000) * 100);
-  $("#storageFill").style.width = `${Math.max(pct, mb ? 3 : 0)}%`;
 }
 
 // ---------------------------------------------------------------------------
@@ -2428,9 +2419,6 @@ $("#playerLike")?.addEventListener("click", () => {
   if (!state.currentTrackObj) return;
   toggleFavorite(state.currentTrackObj, document.createElement("button"));
 });
-
-// Raccourci « Importer » de la barre du haut.
-$("#topbarImportBtn")?.addEventListener("click", () => activateView("import"));
 
 // Bouton « + » de la section playlists de la sidebar : même action que le
 // bouton de la vue Playlists.
