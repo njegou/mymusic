@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>mymusic</title>
-<link rel="stylesheet" href="style.css?v=25">
+<link rel="stylesheet" href="style.css?v=26">
 
 <!-- Page d'accès — styles autonomes (n'écrase rien de style.css) -->
 <style>
@@ -288,15 +288,6 @@
         </div>
         <div class="side-pls" id="sidebarPlaylists"></div>
       </div>
-
-      <div class="storage-meter">
-        <div class="storage-meter-head">
-          <span>Stockage local</span>
-          <span id="storageLabel">0 Mo</span>
-        </div>
-        <div class="storage-bar"><div class="storage-bar-fill" id="storageFill"></div></div>
-        <p class="storage-note">Catalogue indexé : illimité (métadonnées seules)<br>Fichiers stockés : uniquement ce qui a été téléchargé (bibliothèque)</p>
-      </div>
     </aside>
 
     <!-- MAIN -->
@@ -308,10 +299,6 @@
           <input id="searchInput" type="text" placeholder="Chercher un morceau, un artiste…" autocomplete="off">
         </div>
         <div class="topbar-spacer"></div>
-        <button class="topbar-btn" id="topbarImportBtn" title="Importer des fichiers">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0-4 4m4-4 4 4"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
-          Importer
-        </button>
         <button class="user-btn" id="userBtn" title="Compte" aria-label="Compte">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="8" r="4"/>
@@ -493,6 +480,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=26"></script>
+  <script src="app.js?v=27"></script>
 </body>
 </html>
