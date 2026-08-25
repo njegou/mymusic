@@ -89,29 +89,6 @@ input{ font-family: inherit; }
 .nav-item.is-active{ background: var(--violet-soft); color: var(--violet-2); }
 .nav-icon{ width:16px; text-align:center; font-size:14px; opacity:.9; }
 
-.storage-meter{
-  margin-top: auto;
-  padding: 14px 12px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-.storage-meter-head{
-  display:flex; justify-content:space-between;
-  font-size: 12px; color: var(--text-muted); margin-bottom: 8px;
-}
-.storage-bar{
-  height: 5px; border-radius: 3px; background: var(--border); overflow:hidden;
-}
-.storage-bar-fill{
-  height:100%; width: 4%;
-  background: linear-gradient(90deg, var(--violet), var(--violet-2));
-  transition: width .4s ease;
-}
-.storage-note{
-  margin-top: 10px; font-size: 10.5px; line-height:1.5; color: var(--text-muted);
-}
-
 /* MAIN */
 .main{
   overflow-y:auto;
@@ -696,11 +673,6 @@ body{
 }
 .side-pls-empty{ padding: 6px 12px; font-size: 12px; color: var(--text-muted); }
 
-/* ---- Carte stockage ---- */
-.storage-meter{ margin-top: 4px; border-radius: 14px; }
-.storage-bar{ height: 6px; border-radius: 99px; }
-.storage-bar-fill{ border-radius: 99px; }
-
 /* ---- Topbar ---- */
 .topbar{ display:flex; align-items:center; gap: 14px; }
 .topbar-spacer{ flex: 1; }
@@ -905,10 +877,9 @@ body{
 .mobile-tabbar .nav-icon{ width: 22px; height: 22px; }
 .mobile-tabbar .nav-icon svg{ width: 22px; height: 22px; }
 
-/* Sidebar : la liste des playlists absorbe le débordement (scroll), la carte
-   stockage reste entière en bas, et rien ne passe sous le lecteur. */
+/* Sidebar : la liste des playlists absorbe le débordement (scroll)
+   et rien ne passe sous le lecteur. */
 .sidebar{ overflow: hidden; }
-.storage-meter{ flex-shrink: 0; }
 
 /* Mobile : lecteur compact — on masque l'égaliseur et la pastille de source
    pour laisser respirer titre + cœur + transport sur écran étroit. */
