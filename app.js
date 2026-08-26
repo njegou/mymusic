@@ -504,7 +504,7 @@ async function renderRecommendations(force = false) {
 
     box.innerHTML = "";
     // Une rangée vide n'est pas affichée : mieux vaut rien qu'un bloc creux.
-    shelves.filter((sh) => sh.tracks && sh.tracks.length)
+    shelves.filter((sh) => (sh.tracks && sh.tracks.length) || (sh.albums && sh.albums.length))
            .forEach((sh) => box.appendChild(renderRecoShelf(sh)));
   } catch {
     // Silencieux : l'accueil doit rester utilisable sans recommandations.
