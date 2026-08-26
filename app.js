@@ -373,6 +373,8 @@ function homeRecoContainer() {
   return box;
 }
 
+let homeReturnFromAlbum = false;   // vrai quand la vue album a été ouverte depuis l'accueil
+
 function renderRecoShelf(shelf) {
   const section = document.createElement("div");
   section.className = "home-reco-shelf";
@@ -384,16 +386,106 @@ function renderRecoShelf(shelf) {
   const row = document.createElement("div");
   // Réutilise la classe du carrousel existant : même style, aucun CSS à ajouter.
   row.className = $("#homeGrid") ? $("#homeGrid").className : "";
-  shelf.tracks.forEach((t) => {
-    const track = {
-      ...t,
-      navidrome_id: t.navidrome_id || t.id,
-      cover: t.coverArt ? coverUrlWithKey(t.coverArt) : null,
-    };
-    row.appendChild(renderHomeCard(track));
-  });
+  if (shelf.albums && shelf.albums.length) {
+    // Rangée d'albums : la carte mène à la vue détail, pas à une lecture directe.
+    shelf.albums.forEach((a) => row.appendChild(renderHomeAlbumCard(a)));
+  } else {
+    (shelf.tracks || []).forEach((t) => {
+      const track = {
+        ...t,
+        navidrome_id: t.navidrome_id || t.id,
+        cover: t.coverArt ? coverUrlWithKey(t.coverArt) : null,
+      };
+      row.appendChild(renderHomeCard(track));
+    });
+  }
   section.appendChild(row);
   return section;
+}
+
+// Carte album de l'accueil : mêmes classes CSS que renderHomeCard (aucun style
+// neuf), mais le clic ouvre la vue album au lieu de lancer une lecture.
+function renderHomeAlbumCard(album) {
+  const card = document.createElement("div");
+  card.className = "home-card";
+  const coverUrl = album.coverArt ? coverUrlWithKey(album.coverArt) : null;
+  const inner = coverUrl
+    ? `<img src="${coverUrl}" alt="" loading="lazy">`
+    : `<span class="home-card-fallback">${initials(album.name)}</span>`;
+  card.innerHTML = `
+    <div class="home-card-art">
+      <div class="home-card-cover">${inner}</div>
+    </div>
+    <div class="home-card-title">${album.name}</div>
+    <div class="home-card-sub">${album.artist || ""}</div>
+  `;
+  card.addEventListener("click", () => openLibraryAlbum(album.id));
+  return card;
+}
+
+// Ouvre un album de la BIBLIOTHÈQUE Navidrome dans la vue "catalog-album"
+// (réutilisée telle quelle). Distinct de openCatalogAlbum, qui ouvre un album
+// du catalogue mondial via un browseId YouTube. Ici l'id est un id Navidrome :
+// on pose navidrome_id sur chaque piste pour que playTrack streame via
+// /api/stream-nd/ (cf. renderCatalogTrackRow -> playTrack).
+async function openLibraryAlbum(albumId) {
+  activateView("catalog-album");
+  homeReturnFromAlbum = true;
+  const head = $("#catAlbumHead");
+  const container = $("#catAlbumTracks");
+  container.innerHTML = `<div class="empty-state">Chargement de l'album…</div>`;
+  try {
+    const res = await apiFetch(`/api/albums/${encodeURIComponent(albumId)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const raw = await res.json();
+    const album = { ...raw, cover: raw.coverArt ? coverUrlWithKey(raw.coverArt) : null };
+    const tracks = (raw.tracks || []).map((t) => ({
+      ...t,
+      navidrome_id: t.id,          // -> lecture via /api/stream-nd/
+      in_library: true,            // c'est de la bibliothèque, par définition
+      cover: t.coverArt ? coverUrlWithKey(t.coverArt) : album.cover,
+    }));
+
+    const cover = album.cover
+      ? `<img src="${album.cover}" alt="" loading="lazy">`
+      : `<div class="album-card-fallback">${initials(album.name)}</div>`;
+
+    head.innerHTML = `
+      <div class="cat-album-head">
+        <div class="cat-album-cover">${cover}</div>
+        <div class="cat-album-info">
+          <div class="cat-album-kicker">Album</div>
+          <h1 class="view-title">${album.name}</h1>
+          <div class="view-sub">${album.artist}${album.year ? " · " + album.year : ""} · ${tracks.length} titre${tracks.length > 1 ? "s" : ""}</div>
+          <div class="cat-album-actions">
+            <button class="primary-btn" id="catAlbumPlay">▶ Lecture</button>
+            <button class="primary-btn ghost" id="catAlbumShuffle">🔀 Aléatoire</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    container.innerHTML = "";
+    if (!tracks.length) {
+      container.innerHTML = `<div class="empty-state">Aucun morceau disponible pour cet album.</div>`;
+      return;
+    }
+    tracks.forEach((t) => container.appendChild(renderCatalogTrackRow(t, tracks, album)));
+
+    const queue = tracks.map((t) => ({ ...t, cover: t.cover || album.cover }));
+    $("#catAlbumPlay").addEventListener("click", () => {
+      if (queue[0]) playTrack(byLibId(queue[0].id) || queue[0], queue);
+    });
+    $("#catAlbumShuffle").addEventListener("click", () => {
+      if (!queue.length) return;
+      state.shuffle = true;
+      $("#shuffleBtn").classList.add("is-active");
+      const pick = queue[Math.floor(Math.random() * queue.length)];
+      playTrack(byLibId(pick.id) || pick, queue);
+    });
+  } catch (err) {
+    container.innerHTML = `<div class="empty-state">Erreur : ${err.message}</div>`;
+  }
 }
 
 async function renderRecommendations(force = false) {
@@ -1411,7 +1503,14 @@ async function openCatalogAlbum(browseId) {
   }
 }
 
-$("#backToSearchBtn").addEventListener("click", () => activateView("search"));
+$("#backToSearchBtn").addEventListener("click", () => {
+  // Retour contextuel : si la vue album a été ouverte depuis l'accueil on y
+  // revient, sinon comportement historique (retour à la recherche). Repli sur
+  // "search" si aucune vue "home" n'existe sous cet id.
+  const goHome = homeReturnFromAlbum && document.getElementById("view-home");
+  homeReturnFromAlbum = false;
+  activateView(goHome ? "home" : "search");
+});
 
 // ---------------------------------------------------------------------------
 // Catalogue ARTISTES — page artiste : populaires + albums + singles.
