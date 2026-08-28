@@ -388,7 +388,9 @@ function renderRecoShelf(shelf) {
   row.className = $("#homeGrid") ? $("#homeGrid").className : "";
   if (shelf.albums && shelf.albums.length) {
     // Rangée d'albums : la carte mène à la vue détail, pas à une lecture directe.
-    shelf.albums.forEach((a) => row.appendChild(renderHomeAlbumCard(a)));
+    // shelf.catalog => nouveautés du catalogue (browseId -> openCatalogAlbum) ;
+    // sinon albums de la bibliothèque Navidrome (id ND -> openLibraryAlbum).
+    shelf.albums.forEach((a) => row.appendChild(renderHomeAlbumCard(a, shelf.catalog)));
   } else {
     (shelf.tracks || []).forEach((t) => {
       const track = {
@@ -405,10 +407,14 @@ function renderRecoShelf(shelf) {
 
 // Carte album de l'accueil : mêmes classes CSS que renderHomeCard (aucun style
 // neuf), mais le clic ouvre la vue album au lieu de lancer une lecture.
-function renderHomeAlbumCard(album) {
+function renderHomeAlbumCard(album, isCatalog) {
   const card = document.createElement("div");
   card.className = "home-card";
-  const coverUrl = album.coverArt ? coverUrlWithKey(album.coverArt) : null;
+  // Catalogue : cover = URL directe YouTube. Bibliothèque : coverArt = id
+  // Navidrome à proxifier. On gère les deux, dans cet ordre de priorité.
+  const coverUrl = album.cover
+    ? album.cover
+    : (album.coverArt ? coverUrlWithKey(album.coverArt) : null);
   const inner = coverUrl
     ? `<img src="${coverUrl}" alt="" loading="lazy">`
     : `<span class="home-card-fallback">${initials(album.name)}</span>`;
@@ -417,9 +423,13 @@ function renderHomeAlbumCard(album) {
       <div class="home-card-cover">${inner}</div>
     </div>
     <div class="home-card-title">${album.name}</div>
-    <div class="home-card-sub">${album.artist || ""}</div>
+    <div class="home-card-sub">${album.artist || ""}${album.year ? " · " + album.year : ""}</div>
   `;
-  card.addEventListener("click", () => openLibraryAlbum(album.id));
+  card.addEventListener("click", () => {
+    homeReturnFromAlbum = true;
+    if (isCatalog) openCatalogAlbum(album.id);   // browseId YouTube
+    else openLibraryAlbum(album.id);             // id Navidrome
+  });
   return card;
 }
 
