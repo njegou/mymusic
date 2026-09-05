@@ -1,7 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Inter:wght@400;500;600;700;800&display=swap');
 
 :root{
-  --bg: #0A0A0F;
+  --bg: #000000;
   --surface: #101018;
   --surface-2: #16161F;
   --border: #22222E;
@@ -594,12 +594,9 @@ input{ font-family: inherit; }
    spécificité égale, sans les supprimer. On ne surcharge que l'intentionnel.
    =========================================================================== */
 
-/* Fond : halos violet/magenta discrets, immobiles. */
+/* Fond : noir uni. */
 body{
-  background:
-    radial-gradient(1100px 560px at 82% -12%, rgba(139,124,246,.13), transparent 60%),
-    radial-gradient(820px 460px at -8% 18%, rgba(199,125,246,.07), transparent 55%),
-    var(--bg);
+  background: var(--bg);
 }
 
 /* Titres en Bricolage Grotesque. */
