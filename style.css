@@ -1,18 +1,18 @@
 @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Inter:wght@400;500;600;700;800&display=swap');
 
 :root{
-  --bg: #000000;
-  --surface: #101018;
-  --surface-2: #16161F;
-  --border: #22222E;
+  --bg: #191414;
+  --surface: #282828;
+  --surface-2: #333333;
+  --border: #404040;
   --text: #EDEDF2;
   --text-muted: #8A8A98;
-  --violet: #8B7CF6;
-  --violet-2: #A897FF;
-  --violet-soft: rgba(139,124,246,0.14);
-  --accent-2: #C77DF6;            /* magenta — utilisé en dégradé signature */
-  --glow: rgba(139,124,246,0.45); /* halo des éléments accentués */
-  --pink: #FFA8DE;                /* favoris */
+  --violet: #1DB954;
+  --violet-2: #1ed760;
+  --violet-soft: rgba(29,185,84,0.14);
+  --accent-2: #1DB954;            /* vert Spotify */
+  --glow: rgba(29,185,84,0.45);   /* halo des éléments accentués */
+  --pink: #1DB954;                /* vert Spotify pour favoris */
   --display: 'Bricolage Grotesque', var(--font); /* police des titres */
   --cached: #4ADE80;
   --cached-soft: rgba(74,222,128,0.14);
