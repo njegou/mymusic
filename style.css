@@ -70,7 +70,7 @@ input{ font-family: inherit; }
 .brand-mark{
   width: 22px; height: 22px; border-radius: 7px;
   background: #000;
-  box-shadow: 0 0 16px rgba(255,168,222,0.5);
+  box-shadow: 0 0 16px rgba(29,185,84,0.5);
 }
 .brand-name{ font-weight: 800; font-size: 17px; letter-spacing: -0.02em; }
 
@@ -614,7 +614,7 @@ body{
   width: 34px; height: 34px; border-radius: 10px;
   display:flex; align-items:center; justify-content:center;
   background: #000;
-  box-shadow: 0 6px 20px rgba(255,168,222,.4);
+  box-shadow: 0 6px 20px rgba(29,185,84,.4);
 }
 .brand-mark svg{ width: 18px; height: 18px; }
 .brand-name{ font-size: 19px; font-weight: 700; }
