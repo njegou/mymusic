@@ -373,6 +373,7 @@ function homeRecoContainer() {
   return box;
 }
 
+let catalogAlbumCtx = null;        // { album, tracks } de l'album catalogue ouvert
 let homeReturnFromAlbum = false;   // vrai quand la vue album a été ouverte depuis l'accueil
 
 function renderRecoShelf(shelf) {
@@ -1470,6 +1471,7 @@ async function openCatalogAlbum(browseId) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const album = await res.json();
     const tracks = album.tracks || [];
+    catalogAlbumCtx = { album, tracks };
 
     const cover = album.cover
       ? `<img src="${album.cover}" alt="" loading="lazy">`
@@ -1477,7 +1479,12 @@ async function openCatalogAlbum(browseId) {
 
     head.innerHTML = `
       <div class="cat-album-head">
-        <div class="cat-album-cover">${cover}</div>
+        <div class="cat-album-cover">
+          ${cover}
+          <button class="album-dl-btn" id="catAlbumDownload" type="button"
+                  title="Télécharger tout l'album sur le NAS"
+                  aria-label="Télécharger tout l'album">⤓</button>
+        </div>
         <div class="cat-album-info">
           <div class="cat-album-kicker">Album</div>
           <h1 class="view-title">${album.name}</h1>
@@ -1512,6 +1519,65 @@ async function openCatalogAlbum(browseId) {
     container.innerHTML = `<div class="empty-state">Erreur : ${err.message}</div>`;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Téléchargement d'un album entier, morceau par morceau.
+// Séquentiel à dessein : le DS218 lance un yt-dlp + un scan Navidrome par
+// piste, deux téléchargements en parallèle le mettent à genoux. Les pistes
+// déjà en bibliothèque sont sautées.
+// ---------------------------------------------------------------------------
+let albumDownloadBusy = false;
+
+async function downloadWholeAlbum(btn) {
+  if (albumDownloadBusy || !catalogAlbumCtx) return;
+  const { album, tracks } = catalogAlbumCtx;
+  const pending = (tracks || []).filter((t) => !byLibId(t.id));
+  if (!pending.length) {
+    toast("Tout l'album est déjà dans ta bibliothèque.");
+    return;
+  }
+
+  albumDownloadBusy = true;
+  const label = btn.innerHTML;
+  btn.disabled = true;
+  btn.classList.add("is-busy");
+  toast(`Téléchargement de « ${album.name} » — ${pending.length} morceau(x)…`);
+
+  let ok = 0, ko = 0, done = 0;
+  for (const t of pending) {
+    done++;
+    btn.innerHTML = `${done}/${pending.length}`;
+    const entry = await ensureDownloaded({ ...t, cover: t.cover || album.cover }, true);
+    if (entry) {
+      ok++;
+      // Met a jour la ligne correspondante sans re-rendre toute la vue.
+      const st = document.querySelector(
+        `#catAlbumTracks [data-track-id="${t.id}"] .track-row-status`
+      );
+      if (st) { st.classList.add("cached"); st.textContent = "Bibliothèque"; }
+    } else {
+      ko++;
+    }
+  }
+
+  btn.innerHTML = label;
+  btn.disabled = false;
+  btn.classList.remove("is-busy");
+  albumDownloadBusy = false;
+  renderAll();
+  toast(ko
+    ? `« ${album.name} » : ${ok} téléchargé(s), ${ko} échec(s).`
+    : `« ${album.name} » téléchargé (${ok} morceau(x)).`);
+}
+
+// Délégation : l'en-tête album est reconstruit à chaque ouverture, un
+// addEventListener direct serait perdu ou réattaché en double.
+$("#catAlbumHead").addEventListener("click", (e) => {
+  const btn = e.target.closest("#catAlbumDownload");
+  if (!btn) return;
+  e.stopPropagation();
+  downloadWholeAlbum(btn);
+});
 
 $("#backToSearchBtn").addEventListener("click", () => {
   // Retour contextuel : si la vue album a été ouverte depuis l'accueil on y
@@ -1729,13 +1795,13 @@ $("#backToSearchBtn2").addEventListener("click", () => activateView("search"));
 // ---------------------------------------------------------------------------
 // Téléchargement (recherche -> bibliothèque locale -> Navidrome)
 // ---------------------------------------------------------------------------
-async function ensureDownloaded(track) {
+async function ensureDownloaded(track, quiet = false) {
   const existing = byLibId(track.id);
   if (existing) return existing;
 
   const el = document.querySelector(`[data-track-id="${track.id}"]`);
   el?.classList.add("is-loading");
-  toast(`Téléchargement de "${track.title}"…`);
+  if (!quiet) toast(`Téléchargement de "${track.title}"…`);
 
   try {
     const res = await apiFetch("/api/library", {
