@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="mymusic">
+  <title>mymusic</title>
+  <rect width="64" height="64" rx="15" fill="#1f1f22"/>
+  <path d="M16 44 L16 31 Q16 23 24 23 Q32 23 32 31 L32 50 M32 31 Q32 23 40 23 Q48 23 48 31 L48 50"
+        fill="none" stroke="#ffa8de" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
